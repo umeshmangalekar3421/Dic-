@@ -1,4 +1,7 @@
-# Viva / defence notes
+# Viva / interview notes
+
+For internships, **demo the lab** (`python cellforge.py lab`) rather than
+the PDF.  The PDF is the course write-up; the lab is the product.
 
 Short answers you can give without opening a laptop.  Numbers are from
 `results/metrics.json` of the last full run.

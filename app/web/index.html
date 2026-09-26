@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CellForge — PVT-robust standard-cell lab</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="mark">CF</div>
+      <div>
+        <div class="name">CellForge</div>
+        <div class="tag">SKY130-calibrated cell lab · characterization · ML sizing · Liberty · STA</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="pill" id="fo4-pill">FO4 —</span>
+      <span class="pill dim" id="ver-pill">v—</span>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <button data-view="overview" class="on">Overview</button>
+    <button data-view="lab">Live lab</button>
+    <button data-view="devices">Devices</button>
+    <button data-view="library">Library</button>
+    <button data-view="models">Models</button>
+    <button data-view="timing">STA</button>
+    <button data-view="industry">Industry</button>
+  </nav>
+
+  <main>
+    <!-- OVERVIEW -->
+    <section id="view-overview" class="view on">
+      <div class="hero">
+        <h1>The industrial library loop,<br/>without an NDA.</h1>
+        <p>
+          CellForge is a laptop-scale product that does what a standard-cell team does:
+          characterize CMOS gates under process, voltage and temperature, fit a delay/leakage
+          surrogate, size transistors for yield, emit NLDM Liberty, and time a real netlist.
+          Built to be demoed in intern interviews — not just submitted as a PDF.
+        </p>
+        <div class="cta-row">
+          <button class="btn primary" data-go="lab">Open the live lab</button>
+          <button class="btn" data-go="industry">How this maps to internships</button>
+        </div>
+      </div>
+      <div class="kpis" id="kpis"></div>
+      <div class="grid-2">
+        <article class="card">
+          <h2>What you replace</h2>
+          <table class="map" id="flow-map"></table>
+        </article>
+        <article class="card">
+          <h2>FO4 vs supply</h2>
+          <p class="hint">Fanout-4 inverter delay is the currency of digital CMOS. 45 ps at 1.8 V / 25 °C is pinned to SKY130 order of magnitude.</p>
+          <canvas id="fo4-chart" height="220"></canvas>
+        </article>
+      </div>
+    </section>
+
+    <!-- LAB -->
+    <section id="view-lab" class="view">
+      <div class="lab">
+        <aside class="card controls">
+          <h2>Stimulus</h2>
+          <label>Cell
+            <select id="cell"></select>
+          </label>
+          <label>Corner
+            <select id="corner">
+              <option value="ss">ss — slow / high Vt</option>
+              <option value="tt" selected>tt — typical</option>
+              <option value="ff">ff — fast / low Vt</option>
+            </select>
+          </label>
+          <label>Wn <span id="wnv"></span>
+            <input id="wn" type="range" min="0.42" max="4.5" step="0.02" value="0.84"/>
+          </label>
+          <label>Wp <span id="wpv"></span>
+            <input id="wp" type="range" min="0.42" max="6.5" step="0.02" value="1.68"/>
+          </label>
+          <label>VDD <span id="vddv"></span>
+            <input id="vdd" type="range" min="1.44" max="1.98" step="0.02" value="1.80"/>
+          </label>
+          <label>Temp <span id="tempv"></span>
+            <input id="temp" type="range" min="-40" max="125" step="1" value="25"/>
+          </label>
+          <label>Cload <span id="clv"></span>
+            <input id="cload" type="range" min="1" max="32" step="0.2" value="8"/>
+          </label>
+          <label>Input slew <span id="slv"></span>
+            <input id="slew" type="range" min="8" max="200" step="1" value="30"/>
+          </label>
+          <p class="hint" id="cell-desc"></p>
+        </aside>
+        <div>
+          <div class="metrics" id="live-metrics"></div>
+          <article class="card">
+            <div class="row-between">
+              <h2>Sweep</h2>
+              <select id="axis">
+                <option value="vdd">vs VDD</option>
+                <option value="temp_c">vs temperature</option>
+                <option value="wn_um">vs Wn (Wp/Wn held)</option>
+                <option value="cload_ff">vs load</option>
+              </select>
+            </div>
+            <canvas id="sweep-chart" height="260"></canvas>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- DEVICES -->
+    <section id="view-devices" class="view">
+      <div class="grid-2">
+        <article class="card">
+          <div class="row-between">
+            <h2>NMOS output characteristics</h2>
+            <span class="hint">α-power + triode shape, W = 1 µm</span>
+          </div>
+          <canvas id="iv-chart" height="280"></canvas>
+        </article>
+        <article class="card">
+          <h2>Subthreshold Ids–Vgs</h2>
+          <p class="hint">Leakage is exponential in T and in (Vgs − Vt). This is why ff/125 °C burns power and ss/cold misses timing.</p>
+          <canvas id="sub-chart" height="280"></canvas>
+        </article>
+      </div>
+      <article class="card">
+        <h2>Pinned to public SKY130 numbers</h2>
+        <table class="map" id="sky-table"></table>
+      </article>
+    </section>
+
+    <!-- LIBRARY -->
+    <section id="view-library" class="view">
+      <article class="card">
+        <h2>Sign-off table — min vs logical-effort vs ML-opt</h2>
+        <p class="hint">Worst-corner delay is ss / 125 °C / 1.62 V. Yield is 220-shot Pelgrom Monte Carlo at ss / 85 °C. ML-opt is the NSGA-II knee, re-simulated with physics (not the surrogate).</p>
+        <div class="table-wrap"><table id="lib-table"></table></div>
+      </article>
+      <article class="card">
+        <h2>Worst-corner delay by policy</h2>
+        <canvas id="lib-chart" height="260"></canvas>
+      </article>
+    </section>
+
+    <!-- MODELS -->
+    <section id="view-models" class="view">
+      <div class="kpis" id="ml-kpis"></div>
+      <div class="grid-2">
+        <article class="card">
+          <h2>Test R² by family — delay</h2>
+          <canvas id="r2-chart" height="240"></canvas>
+        </article>
+        <article class="card">
+          <h2>Why the ensemble earns its keep</h2>
+          <p>
+            Ridge is the linear α-power intuition. HistGB captures the PVT × stack × load
+            interactions that a library team would otherwise spend SPICE licenses on.
+            The optimizer calls the surrogate thousands of times; the knee is signed off
+            with the physics engine — the same two-level pattern used in industrial DTCO.
+          </p>
+          <img class="fig" src="/figures/13_feature_importance.png" alt="Permutation importance"/>
+        </article>
+      </div>
+      <div class="grid-2">
+        <img class="fig card-img" src="/figures/11_ml_parity_delay.png" alt="Delay parity"/>
+        <img class="fig card-img" src="/figures/15_pareto.png" alt="Pareto fronts"/>
+      </div>
+    </section>
+
+    <!-- TIMING -->
+    <section id="view-timing" class="view">
+      <div class="kpis" id="sta-kpis"></div>
+      <div class="grid-2">
+        <article class="card">
+          <h2>Registered 8-bit RCA — Fmax vs PVT</h2>
+          <canvas id="sta-chart" height="240"></canvas>
+        </article>
+        <article class="card">
+          <h2>Setup check</h2>
+          <p class="eq">WNS = T<sub>clk</sub> − (t<sub>cq</sub> + t<sub>combo</sub> + t<sub>su</sub>)</p>
+          <p class="hint">Ideal clock, NLDM bilinear interpolation, fanout wire load. Critical path is the carry chain (XOR generate + AOI21/INV mirror carry × 8). A carry-lookahead unit would raise Fmax — that is the next DTCO conversation, not a missing feature.</p>
+          <div id="sta-table"></div>
+        </article>
+      </div>
+      <article class="card">
+        <h2>Liberty</h2>
+        <p class="hint">NLDM 5×5 delay and output-slew tables. Download and inspect — this is the file a PrimeTime-class tool consumes.</p>
+        <div class="cta-row">
+          <a class="btn" href="/api/liberty/tt" download>tt .lib</a>
+          <a class="btn" href="/api/liberty/ss" download>ss .lib</a>
+          <a class="btn" href="/api/liberty/ff" download>ff .lib</a>
+        </div>
+      </article>
+    </section>
+
+    <!-- INDUSTRY -->
+    <section id="view-industry" class="view">
+      <article class="card">
+        <h2>Roles this product prepares you to talk to</h2>
+        <div id="roles" class="roles"></div>
+      </article>
+      <article class="card">
+        <h2>Two-minute demo script (read this before an interview)</h2>
+        <ol class="script">
+          <li><b>Live lab.</b> Open NAND2, drop VDD from 1.8 to 1.5 V, switch tt → ss. Delay should jump. That is PVT. Recruiters want to see you <i>drive</i> a cell, not recite a slide.</li>
+          <li><b>Devices.</b> Show the subthreshold plot. “Leakage doubles every ~9 °C; ff/hot is a power problem, ss/cold is a timing problem.”</li>
+          <li><b>Library.</b> Min-size INV fails the delay spec (yield 0). ML-opt passes. Balanced logical-effort is already good — ML is the last 10–20 %, which is how real library teams talk.</li>
+          <li><b>Models.</b> HistGB R² 0.96 vs Ridge 0.68. “We do not skip physics. The surrogate sits inside NSGA-II; the knee is re-simulated.”</li>
+          <li><b>STA.</b> 8-bit RCA, 614 MHz tt / 426 MHz ss, 96 % yield at 400 MHz. “Ripple carry is the slow topology on purpose — I can discuss CLA next.”</li>
+          <li><b>Limits.</b> Say them yourself: compact MOS not BSIM, no SPEF, ideal clock. Honesty is a hiring signal.</li>
+        </ol>
+      </article>
+      <article class="card">
+        <h2>Limits (state these unprompted)</h2>
+        <ul id="limits" class="limits"></ul>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    CellForge · open-source SKY130-calibrated cell lab · not a foundry sign-off tool · physics pinned to public Ion / Ioff / FO4
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>

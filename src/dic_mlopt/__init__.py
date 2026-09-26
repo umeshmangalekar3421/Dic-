@@ -1,3 +1,3 @@
-"""ML-assisted PVT-robust standard-cell optimization (SKY130-calibrated)."""
+"""CellForge — PVT-robust standard-cell lab (SKY130-calibrated)."""
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

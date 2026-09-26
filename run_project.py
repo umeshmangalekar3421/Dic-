@@ -57,8 +57,8 @@ def _j(x):
 
 def banner():
     print("=" * 72)
-    print("  ML-Assisted PVT-Robust Standard-Cell Optimization")
-    print("  Digital IC Design course project  ·  SKY130-calibrated  ·  FOSS")
+    print("  CellForge  ·  PVT-robust standard-cell lab")
+    print("  SKY130-calibrated  ·  characterization · ML sizing · Liberty · STA")
     print("=" * 72)
 
 

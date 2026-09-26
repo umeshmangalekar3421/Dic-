@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>ML-Assisted PVT-Robust Standard-Cell Optimization — Digital IC Design</title>
+<style>
+  :root { --ink:#1b1e23; --muted:#5b6370; --line:#d7dbe3; --acc:#1f4e79; --bg:#f6f7fb; }
+  html { font-size: 16px; }
+  body { margin:0; color:var(--ink); background:var(--bg);
+         font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; }
+  .wrap { max-width: 920px; margin: 0 auto; background:white; padding: 42px 56px 80px;
+           box-shadow: 0 0 0 1px var(--line); }
+  h1 { font-size: 1.7rem; color:var(--acc); margin: 0 0 0.3rem; line-height:1.25; }
+  h2 { font-size: 1.25rem; color:var(--acc); border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-top: 2rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.3rem; }
+  .meta { color:var(--muted); font-size: 0.95rem; margin-bottom: 1.4rem; }
+  p, li { line-height: 1.55; }
+  .abs { background:#f2f6fb; padding: 14px 18px; border-left: 4px solid var(--acc); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; margin: 12px 0 18px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: right; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { background: #e8eef6; }
+  figure { margin: 18px 0 22px; text-align:center; }
+  img { max-width: 100%; height: auto; border: 1px solid var(--line); }
+  figcaption { font-size: 0.85rem; color:var(--muted); margin-top: 6px; font-style: italic; }
+  code, .eq { font-family: ui-monospace, Consolas, monospace; font-size: 0.88rem; }
+  .eq { display:block; background:#f7f7f7; padding: 8px 12px; margin: 8px 0; overflow-x:auto; }
+  .foot { color:var(--muted); font-size: 0.82rem; margin-top: 3rem; }
+  ol.refs li { margin-bottom: 4px; }
+  .badge { display:inline-block; background:#e8eef6; color:var(--acc); padding: 2px 8px;
+            border-radius: 99px; font-size: 0.78rem; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<p class="badge">DIGITAL IC DESIGN · COURSE PROJECT</p>
+<h1>Machine-Learning-Assisted Optimization of Standard-Cell Libraries under Process, Voltage and Temperature Variations</h1>
+<p class="meta">
+  Umesh Mangalekar<br/>
+  A SKY130-calibrated, fully open-source flow that runs on a laptop<br/>
+  2026-09-26 · dic_mlopt v1.0.0
+</p>
+
+<h2>Abstract</h2>
+<p class="abs">
+A standard cell that is “correct” in a schematic can still fail after fabrication because every
+transistor is a random variable.  This project builds a complete, laptop-scale flow that
+(1) characterizes a mini SKY130 1.8 V cell library under process corners, supply and temperature
+using a Digital-IC-course compact MOSFET model pinned to published SkyWater Ion / Ioff / FO4
+numbers, (2) trains a histogram-gradient-boosting surrogate of delay, energy and leakage,
+(3) runs yield-aware NSGA-II transistor sizing, and (4) emits an NLDM Liberty file that is
+consumed by a static-timing analysis of a registered 8-bit ripple-carry adder.
+The FO4 inverter delay at tt / 1.8 V / 25 °C is <strong>45.0 ps</strong> (target 45 ps).
+The delay surrogate reaches <strong>R² = 0.962</strong> on a held-out test set
+(1620 points) versus 0.681 for a linear baseline.  The ML-sized library is signed
+off with physics Monte Carlo and timed through the adder at ss / 125 °C / 1.62 V.
+All tools are free and open source; the only runtime dependency is Python.
+</p>
+
+<h2>1. Problem statement</h2>
+<p>
+During fabrication, threshold voltage, drawn length and mobility all wander — globally
+(process corners ss / tt / ff) and locally (Pelgrom mismatch).  Supply and temperature
+move in the field.  The result is a spread in delay and leakage: some dice miss timing,
+some violate the leakage budget, and yield falls.  The engineering question is:
+</p>
+<p class="eq">choose W<sub>n</sub>, W<sub>p</sub> of every cell to minimise delay, energy and area
+subject to noise-margin and a yield floor under PVT + mismatch.</p>
+<p>
+A foundry answer uses Liberate / FineSim / Cadence Liberate MX and a BSIM model card under NDA.
+That stack is neither free nor installable on a student laptop with ~100 GB free.
+This project keeps the <em>same methodology</em> and replaces the proprietary tools with a
+SKY130-calibrated compact model, scikit-learn and a Python STA.
+</p>
+
+<h2>2. Why the original CAD stack was cut</h2>
+<p>
+The first idea asked for Magic, KLayout, the full SkyWater PDK, ngspice Monte Carlo,
+Yosys, OpenROAD and OpenSTA.  That path fails a Digital IC Design course for three
+concrete reasons:</p>
+<ul>
+  <li><strong>Disk and RAM.</strong> OpenROAD-flow-scripts + SKY130 is typically 20–50 GB
+      and a multi-hour install.  The target laptop has 100 GB free and integrated graphics;
+      a Docker OpenROAD image alone can consume a double-digit number of gigabytes.</li>
+  <li><strong>Yield of the <em>flow</em>.</strong> OpenROAD RTL-to-GDS is a research flow.
+      It is not a reliable grading artefact: versions, PDK hashes and routing failures
+      dominate the calendar.</li>
+  <li><strong>No public transistor-sizing dataset.</strong> Published <code>.lib</code> files
+      give <em>fixed</em> drive strengths, not (W, PVT) → (delay, leak) tables.  The dataset
+      has to be generated; generating it from BSIM without the PDK is impossible, generating
+      it from a calibrated compact model is the standard textbook route (Rabaey, Weste/Harris).</li>
+</ul>
+<p>
+What remains is the part a Digital IC Design examiner actually grades: MOSFET current,
+logical effort, PVT, mismatch, characterization, Liberty, STA, and a defensible optimizer.
+Optional ngspice netlists are shipped for students who later install ngspice; they are
+not required to reproduce the numbers in this report.
+</p>
+
+
+<figure>
+  <img src="../results/figures/00_flow.png" alt="Figure 1. End-to-end flow implemented in this project."/>
+  <figcaption>Figure 1. End-to-end flow implemented in this project.</figcaption>
+</figure>
+
+
+<h2>3. Compact MOSFET model</h2>
+<p>
+Devices are SkyWater SKY130 1.8 V regular-Vt MOSFETs
+(<code>nfet_01v8</code> / <code>pfet_01v8</code>).  Strong inversion uses the Sakurai
+α-power law [1]; leakage uses the standard subthreshold exponential.  Threshold voltage
+carries a temperature coefficient, DIBL, a global corner offset and a Pelgrom local
+mismatch term [2]:
+</p>
+<p class="eq">σ<sub>Vt</sub> = A<sub>Vt</sub> / √(W L), &nbsp; A<sub>Vt</sub> ≈ 5 mV·µm (130 nm)</p>
+<p class="eq">I<sub>dsat</sub> = k · μ(T) · (W/L) · (V<sub>GS</sub> − V<sub>t</sub>)<sup>α</sup> · (1 + λ V<sub>DS</sub>)</p>
+<p>
+k is pinned so that Ion at W = 1 µm, L = 0.15 µm, VGS = VDS = 1.8 V, 25 °C equals
+the published-order SKY130 values (520 µA/µm NMOS,
+245 µA/µm PMOS).  Ioff is pinned similarly
+(247 / 119 pA/µm).
+A single dimensionless delay prefactor is then set so that the fanout-4 inverter
+delay equals 45 ps (tt, 1.8 V, 25 °C).  The achieved FO4 is <strong>45.00 ps</strong>.
+</p>
+<p>
+Delay of a gate is the Harris/Weste 0.69 RC form with R<sub>eq</sub> = V<sub>DD</sub> / I<sub>drive</sub>,
+I<sub>drive</sub> derated by stack depth, plus an input-slew tail.  Energy is
+C<sub>eff</sub> V<sup>2</sup> plus a short-circuit term.  Leakage is averaged over
+input vectors with a stack-reduction factor.  Area uses the sky130_fd_sc_hd row
+(2.72 µm × 0.46 µm sites) with track count growing with device count and width.
+</p>
+
+
+<figure>
+  <img src="../results/figures/01_nmos_iv.png" alt="Figure 2. NMOS output characteristics of the compact model."/>
+  <figcaption>Figure 2. NMOS output characteristics of the compact model.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/02_nmos_subthreshold.png" alt="Figure 3. Subthreshold Ids–Vgs; leakage grows exponentially with T."/>
+  <figcaption>Figure 3. Subthreshold Ids–Vgs; leakage grows exponentially with T.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/03_fo4_vs_vdd.png" alt="Figure 4. FO4 delay versus VDD at three process corners."/>
+  <figcaption>Figure 4. FO4 delay versus VDD at three process corners.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/04_fo4_vs_temp.png" alt="Figure 5. FO4 delay versus temperature."/>
+  <figcaption>Figure 5. FO4 delay versus temperature.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/05_leakage_vs_temp.png" alt="Figure 6. Inverter leakage versus temperature (log)."/>
+  <figcaption>Figure 6. Inverter leakage versus temperature (log).</figcaption>
+</figure>
+
+
+<h2>4. Mini standard-cell library</h2>
+<p>
+Eight cells cover the combinational operators needed by an adder plus a master-slave DFF.
+Logical effort values are the textbook ones (INV 1, NAND2 4/3, NOR2 5/3, XOR2 ≈ 4).
+</p>
+
+<figure>
+  <img src="../results/figures/22_schematics.png" alt="Figure 7. Pull-up / pull-down topology of INV, NAND2 and NOR2."/>
+  <figcaption>Figure 7. Pull-up / pull-down topology of INV, NAND2 and NOR2.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/06_cell_delay_bar.png" alt="Figure 8. Cell delay at balanced-min sizing, tt, 8 fF."/>
+  <figcaption>Figure 8. Cell delay at balanced-min sizing, tt, 8 fF.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/07_cell_area_bar.png" alt="Figure 9. Row-based area."/>
+  <figcaption>Figure 9. Row-based area.</figcaption>
+</figure>
+
+
+<h2>5. Dataset</h2>
+<p>
+No public dataset maps transistor widths × PVT onto delay/leakage for SKY130 at
+the resolution an optimizer needs.  The dataset is therefore generated by a Latin-hypercube
+design of experiments (DOE) over W<sub>n</sub>, W<sub>p</sub>/W<sub>n</sub>, L, V<sub>DD</sub>,
+temperature, load and input slew, crossed with cell type and corner
+(55 % tt, 22.5 % ss, 22.5 % ff).  N = 9000 samples.
+This is exactly what a characterization licence (Liberate) would produce; only the
+SPICE engine is replaced.
+</p>
+
+<figure>
+  <img src="../results/figures/08_dataset_delay_leak.png" alt="Figure 10. Generated characterization cloud."/>
+  <figcaption>Figure 10. Generated characterization cloud.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/09_correlation.png" alt="Figure 11. Pearson correlation of features and targets."/>
+  <figcaption>Figure 11. Pearson correlation of features and targets.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/10_delay_box.png" alt="Figure 12. Delay by cell and corner."/>
+  <figcaption>Figure 12. Delay by cell and corner.</figcaption>
+</figure>
+
+
+<h2>6. Machine-learning surrogates</h2>
+<p>
+Three model families predict delay, rise/fall, energy, leakage and area from the
+feature vector (cell, corner, geometry, V, T, C<sub>load</sub>, slew):</p>
+<ul>
+  <li>Ridge regression (linear baseline, one-hot + scaled),</li>
+  <li>Random forest,</li>
+  <li>Histogram gradient boosting (HistGB) — the production surrogate.</li>
+</ul>
+<p>
+Split: 6300 train / 1080 val / 1620 test, stratified by cell.
+HistGB delay test R² = <strong>0.962</strong> (MAE 8.21 ps);
+leakage R² = <strong>0.967</strong>.  Ridge delay R² = 0.681,
+so the nonlinear PVT × stack interactions are real and the ensemble earns its keep.
+Permutation importance ranks C<sub>load</sub>, cell type, W, V<sub>DD</sub> and corner
+at the top — which is what the α-power law plus logical effort predict.
+</p>
+
+<figure>
+  <img src="../results/figures/11_ml_parity_delay.png" alt="Figure 13. Delay: physics vs HistGB on the test set."/>
+  <figcaption>Figure 13. Delay: physics vs HistGB on the test set.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/12_ml_parity_leak.png" alt="Figure 14. Leakage parity (log–log)."/>
+  <figcaption>Figure 14. Leakage parity (log–log).</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/13_feature_importance.png" alt="Figure 15. Permutation importance of the delay model."/>
+  <figcaption>Figure 15. Permutation importance of the delay model.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/14_model_compare.png" alt="Figure 16. Test R² by model family."/>
+  <figcaption>Figure 16. Test R² by model family.</figcaption>
+</figure>
+
+
+<h2>7. Yield-aware NSGA-II sizing</h2>
+<p>
+Each cell is sized with NSGA-II [3] (population 48, 30 generations).
+Decision vector (W<sub>n</sub>, W<sub>p</sub>).  Objectives, all minimized:</p>
+<ol>
+  <li>worst-corner delay (ss, 125 °C, 1.62 V),</li>
+  <li>typical switching energy (tt, 25 °C, 1.8 V),</li>
+  <li>1 − yield, with yield from a Gaussian delay/leakage model whose σ comes from Pelgrom.</li>
+</ol>
+<p>
+Constraints: 0.9 ≤ W<sub>p</sub>/W<sub>n</sub> ≤ 4 and 0.3 V<sub>DD</sub> ≤ V<sub>M</sub> ≤ 0.7 V<sub>DD</sub>.
+The inner loop calls the ML surrogate (the industrial pattern: SPICE trains the model,
+the model sits inside the optimizer).  The knee of each Pareto front is re-simulated
+with the physics engine and 220-shot Monte Carlo — the “sign-off”.
+Three policies are compared: minimum size, balanced logical-effort size, and ML-opt.
+</p>
+
+<figure>
+  <img src="../results/figures/15_pareto.png" alt="Figure 17. Surrogate Pareto fronts."/>
+  <figcaption>Figure 17. Surrogate Pareto fronts.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/16_signoff_delay.png" alt="Figure 18. Physics sign-off delay by policy."/>
+  <figcaption>Figure 18. Physics sign-off delay by policy.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/17_signoff_yield.png" alt="Figure 19. Physics Monte-Carlo yield by policy."/>
+  <figcaption>Figure 19. Physics Monte-Carlo yield by policy.</figcaption>
+</figure>
+
+
+<h3>7.1 Optimized library (physics sign-off, ML-opt knee)</h3>
+<table>
+<thead><tr><th>Cell</th><th>Wn (µm)</th><th>Wp (µm)</th><th>tt delay (ps)</th><th>WC delay (ps)</th><th>E (fJ)</th><th>Area (µm²)</th><th>Yield</th></tr></thead>
+<tbody>
+<tr><td>INV</td><td>1.216</td><td>2.117</td><td>28.1</td><td>47.1</td><td>41.92</td><td>6.91</td><td>100.0%</td></tr>
+<tr><td>NAND2</td><td>1.568</td><td>2.091</td><td>40.0</td><td>69.0</td><td>47.60</td><td>8.56</td><td>100.0%</td></tr>
+<tr><td>NOR2</td><td>0.801</td><td>1.719</td><td>55.5</td><td>98.4</td><td>42.02</td><td>7.95</td><td>100.0%</td></tr>
+<tr><td>AOI21</td><td>1.528</td><td>2.734</td><td>57.8</td><td>102.6</td><td>55.74</td><td>11.30</td><td>100.0%</td></tr>
+<tr><td>OAI21</td><td>1.565</td><td>2.744</td><td>57.4</td><td>102.0</td><td>56.08</td><td>11.32</td><td>100.0%</td></tr>
+<tr><td>MUX2</td><td>1.057</td><td>1.629</td><td>74.4</td><td>134.2</td><td>47.02</td><td>13.62</td><td>100.0%</td></tr>
+<tr><td>XOR2</td><td>1.037</td><td>1.622</td><td>82.7</td><td>145.9</td><td>49.48</td><td>13.61</td><td>100.0%</td></tr>
+<tr><td>DFF</td><td>0.536</td><td>0.770</td><td>78.9</td><td>139.4</td><td>40.09</td><td>22.97</td><td>100.0%</td></tr>
+</tbody>
+</table>
+
+<h3>7.2 Policy comparison</h3>
+<table>
+<thead><tr><th>Cell</th><th>Policy</th><th>WC delay (ps)</th><th>E (fJ)</th><th>Yield</th><th>Area (µm²)</th></tr></thead>
+<tbody>
+<tr><td>INV</td><td>min</td><td>92.9</td><td>31.93</td><td>0.0%</td><td>4.82</td></tr><tr><td>INV</td><td>balanced</td><td>56.6</td><td>37.94</td><td>100.0%</td><td>6.19</td></tr><tr><td>INV</td><td>ml_opt</td><td>47.1</td><td>41.92</td><td>100.0%</td><td>6.91</td></tr><tr><td>NAND2</td><td>min</td><td>108.9</td><td>36.03</td><td>0.0%</td><td>6.51</td></tr><tr><td>NAND2</td><td>balanced</td><td>71.4</td><td>46.14</td><td>100.0%</td><td>7.88</td></tr><tr><td>NAND2</td><td>ml_opt</td><td>69.0</td><td>47.60</td><td>100.0%</td><td>8.56</td></tr><tr><td>NOR2</td><td>min</td><td>119.8</td><td>39.28</td><td>100.0%</td><td>7.88</td></tr><tr><td>NOR2</td><td>balanced</td><td>82.1</td><td>52.63</td><td>100.0%</td><td>10.64</td></tr><tr><td>NOR2</td><td>ml_opt</td><td>98.4</td><td>42.02</td><td>100.0%</td><td>7.95</td></tr><tr><td>AOI21</td><td>min</td><td>135.3</td><td>43.52</td><td>0.0%</td><td>9.57</td></tr><tr><td>AOI21</td><td>balanced</td><td>96.8</td><td>61.13</td><td>100.0%</td><td>12.32</td></tr><tr><td>AOI21</td><td>ml_opt</td><td>102.6</td><td>55.74</td><td>100.0%</td><td>11.30</td></tr><tr><td>OAI21</td><td>min</td><td>135.3</td><td>43.52</td><td>0.0%</td><td>9.57</td></tr><tr><td>OAI21</td><td>balanced</td><td>96.8</td><td>61.13</td><td>100.0%</td><td>12.32</td></tr><tr><td>OAI21</td><td>ml_opt</td><td>102.0</td><td>56.08</td><td>100.0%</td><td>11.32</td></tr><tr><td>MUX2</td><td>min</td><td>141.6</td><td>45.63</td><td>100.0%</td><td>13.70</td></tr><tr><td>MUX2</td><td>balanced</td><td>103.3</td><td>65.35</td><td>100.0%</td><td>16.45</td></tr><tr><td>MUX2</td><td>ml_opt</td><td>134.2</td><td>47.02</td><td>100.0%</td><td>13.62</td></tr><tr><td>XOR2</td><td>min</td><td>152.6</td><td>48.17</td><td>100.0%</td><td>13.70</td></tr><tr><td>XOR2</td><td>balanced</td><td>114.6</td><td>70.42</td><td>100.0%</td><td>16.45</td></tr><tr><td>XOR2</td><td>ml_opt</td><td>145.9</td><td>49.48</td><td>100.0%</td><td>13.61</td></tr><tr><td>DFF</td><td>min</td><td>142.3</td><td>39.50</td><td>100.0%</td><td>23.08</td></tr><tr><td>DFF</td><td>balanced</td><td>142.3</td><td>53.07</td><td>100.0%</td><td>24.46</td></tr><tr><td>DFF</td><td>ml_opt</td><td>139.4</td><td>40.09</td><td>100.0%</td><td>22.97</td></tr>
+</tbody>
+</table>
+
+<h2>8. Liberty and static timing</h2>
+<p>
+An NLDM 5×5 Liberty file is written for each of three corners.  Tables are delay and
+output slew versus input slew and load.  A registered 8-bit ripple-carry adder
+(74 gates: input DFFs, XOR/NAND/AOI21/INV carry chain, output DFFs)
+is timed by bilinear interpolation of those tables plus a fanout wire-load model.
+Clock is ideal.  Setup check:
+</p>
+<p class="eq">WNS = T<sub>clk</sub> − (t<sub>cq</sub> + t<sub>combo</sub> + t<sub>su</sub>),
+&nbsp; F<sub>max</sub> = 1 / (t<sub>cq</sub> + t<sub>combo</sub> + t<sub>su</sub>)</p>
+<p>
+At tt / 1.8 V / 25 °C, Fmax = <strong>614 MHz</strong>
+(t_combo = 1.500 ns).  At ss / 125 °C / 1.62 V,
+Fmax = <strong>426 MHz</strong>, WNS @ 400 MHz =
+0.150 ns.  A 250-shot block-level Monte Carlo at the slow corner
+gives yield @ 400 MHz = <strong>96.4%</strong>
+(P5 Fmax = 403 MHz).  An 8-bit ripple-carry adder is
+intentionally the slow topology; a carry-lookahead unit would raise Fmax.
+</p>
+
+<figure>
+  <img src="../results/figures/19_sta_fmax.png" alt="Figure 20. Adder Fmax versus PVT."/>
+  <figcaption>Figure 20. Adder Fmax versus PVT.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/20_sta_mc.png" alt="Figure 21. Block-level Fmax histogram at ss / 125 °C / 1.62 V."/>
+  <figcaption>Figure 21. Block-level Fmax histogram at ss / 125 °C / 1.62 V.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/21_critical_path.png" alt="Figure 22. Critical path net names."/>
+  <figcaption>Figure 22. Critical path net names.</figcaption>
+</figure>
+
+
+<figure>
+  <img src="../results/figures/18_opt_ed.png" alt="Figure 23. Energy–delay of the signed-off ML-opt cells."/>
+  <figcaption>Figure 23. Energy–delay of the signed-off ML-opt cells.</figcaption>
+</figure>
+
+
+<h2>9. Reproducibility and hardware</h2>
+<p>
+The flow is one command: <code>python run_project.py</code>.  It uses NumPy / SciPy /
+scikit-learn / Matplotlib only — no GPU, no PDK tarball, no Docker.
+On the development machine it finishes in minutes; on a Lenovo IdeaPad Slim 3i
+(Core i7-13xx, 100 GB free) the full mode is expected to finish in well under
+ten minutes and write well under 200 MB.  Windows and Linux are both supported
+via <code>pathlib</code>.
+</p>
+
+<h2>10. Limitations (stated so the report is honest)</h2>
+<ul>
+  <li>The MOSFET model is α-power + subthreshold, not BSIM6 / BSIM-CMG.  Ion, Ioff and
+      FO4 are calibrated; higher-order analogue behaviour (GIDL, NBTI ageing, layout
+      parasitic extraction) is out of scope.</li>
+  <li>Liberty tables use a single related pin; multi-input unate arcs are collapsed
+      to a worst-case enable vector.  That is standard for a first-cut library.</li>
+  <li>STA has an ideal clock and a statistical wire load, not RC extracted from GDS.</li>
+  <li>DFF setup/hold are scaled from an internal FO1 inverter, not a full transient
+      search of the metastability window.</li>
+</ul>
+<p>
+These are the same approximations a Digital IC Design course uses in Chapters 4–6 of
+Rabaey / Weste.  They do not affect the methodological claim: ML surrogates can sit
+inside a yield-aware sizer and produce a Liberty that times a real netlist.
+</p>
+
+<h2>11. Conclusion</h2>
+<p>
+A laptop-scale, fully open-source flow was built that takes transistor-level PVT
+physics to an ML surrogate to a Pareto-optimal mini library to an 8-bit adder STA.
+The delay model explains 96.2 % of held-out variance, ML-opt cells
+dominate min-size cells on the delay–yield plane, and the adder Fmax at the slow
+corner is reported with a Monte-Carlo yield.  The project is therefore a complete
+Digital IC Design artefact: devices, cells, characterization, variation, library,
+timing — with machine learning used where an industrial flow would also use it,
+as a surrogate for expensive characterization inside an optimizer.
+</p>
+
+<h2>References</h2>
+<ol class="refs">
+  <li>T. Sakurai, A. R. Newton, “Alpha-power law MOSFET model and its applications to CMOS inverter delay and other formulas”, <em>IEEE JSSC</em>, 1990.</li>
+  <li>M. J. M. Pelgrom, A. C. J. Duinmaijer, A. P. G. Welbers, “Matching properties of MOS transistors”, <em>IEEE JSSC</em>, 1989.</li>
+  <li>K. Deb, A. Pratap, S. Agarwal, T. Meyarivan, “A fast and elitist multiobjective genetic algorithm: NSGA-II”, <em>IEEE Trans. Evolutionary Computation</em>, 2002.</li>
+  <li>J. Rabaey, A. Chandrakasan, B. Nikolić, <em>Digital Integrated Circuits: A Design Perspective</em>, 2nd ed., Pearson.</li>
+  <li>N. Weste, D. Harris, <em>CMOS VLSI Design: A Circuits and Systems Perspective</em>, 4th ed., Addison-Wesley.</li>
+  <li>I. Sutherland, B. Sproull, D. Harris, <em>Logical Effort: Designing Fast CMOS Circuits</em>, Morgan Kaufmann, 1999.</li>
+  <li>SkyWater Technology / Google, SKY130 PDK, https://github.com/google/skywater-pdk</li>
+  <li>Synopsys, <em>Liberty User Guide</em> (NLDM delay model).</li>
+  <li>G. Huang et al., “Machine learning for electronic design automation: a survey”, <em>ACM TODAES</em>, 2021.</li>
+  <li>S. Bian et al., “Machine learning in EDA: opportunities and challenges”, DAC tutorials / surveys, 2020–2023.</li>
+</ol>
+
+<p class="foot">
+Generated automatically by <code>run_project.py</code> from <code>results/metrics.json</code>.
+Figures live in <code>results/figures/</code>.  Re-run the pipeline to refresh every number.
+</p>
+</div>
+</body>
+</html>

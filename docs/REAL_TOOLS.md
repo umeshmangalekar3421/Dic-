@@ -8,22 +8,35 @@ industry tools.
 
 ## Status
 
-| Layer | Python model | Real tool | Status |
-|---|---|---|---|
-| RTL synthesis | `design.py` (hand-built netlist) | **Yosys** | ✅ **REAL — working** |
-| Transistor model | `compact.py` | **ngspice + BSIM** | 🔧 backend written, needs ngspice on your machine |
-| Static timing | `sta.py` | **OpenSTA** | 🔧 backend written, needs OpenSTA binary |
-| Place & route | `pd.py` | **OpenROAD** | 🔧 backend written, needs OpenROAD |
-| Optimization | `optimizer.py` | *(none standard)* | ⭐ **ours — unchanged, tool-agnostic** |
+| Layer | Python model | Real tool | Backend module | Status |
+|---|---|---|---|---|
+| RTL synthesis | `design.py` (hand-built netlist) | **Yosys** | `backends/yosys.py` | ✅ **REAL — verified end to end** |
+| Transistor model | `compact.py` | **ngspice + BSIM** | `backends/ngspice.py` | ✅ written — runs the moment `ngspice` is installed |
+| Static timing | `sta.py` | **OpenSTA** | `backends/opensta.py` | ✅ written — runs the moment `sta` is installed |
+| Cell timing library | *(ours)* | **Liberty (.lib)** | `backends/liberty.py` | ✅ generates a virtual 28 nm PDK |
+| Netlist hand-off | *(ours)* | **structural Verilog** | `backends/emit.py` | ✅ verified by Yosys elaboration |
+| Place & route | `pd.py` | **OpenROAD** | `backends/tools.py` (detection) | 🔧 detection only — P&R still our model |
+| Optimization | `optimizer.py` | *(none standard)* | — | ⭐ **ours — unchanged, tool-agnostic** |
 
-"Backend written" means the detection, invocation and result-parsing code
-exists and the flow falls back to the Python model automatically whenever the
-tool is absent. Nothing breaks either way.
+"Written" means the deck/SDC/TCL generation, tool invocation and
+result-parsing code all exist, and the flow falls back to the Python model
+automatically whenever the tool is absent. Nothing breaks either way.
+
+Every tool that cannot be exercised in this sandbox is still *tested* here —
+the generators and parsers run against canned tool output, so the only thing
+left to verify on your machine is that the tool itself is installed.
 
 Check what is live on any machine with:
 
 ```bash
 python -c "from fabaware.backends import tools; print(tools.summary())"
+```
+
+Or exercise all of them end to end:
+
+```bash
+python3 scripts/verify_real_backends.py            # what works, what is missing
+python3 scripts/verify_real_backends.py --liberty sky130.lib   # with a real PDK
 ```
 
 ---
@@ -83,7 +96,81 @@ placement density to 0.57 — the physically correct response, found by search.
 
 ---
 
-## 2. Installing the rest on your own machine
+## 2. ngspice — real transistor simulation
+
+`backends/ngspice.py` replaces `compact.py` with measured BSIM3v3 (level 49)
+device physics. It ships a complete model card, so it needs no PDK.
+
+The key design decision is **characterize-then-fit, not simulate-everything**.
+Running SPICE inside a Monte-Carlo loop over thousands of chips would take
+hours. Instead SPICE runs *once*, to measure the handful of numbers a compact
+model actually needs:
+
+| Measured by ngspice | Feeds | Deck |
+|---|---|---|
+| I_on at fixed bias | drive strength | `deck_iv()` |
+| I_off (off-state leakage) | static power | `deck_leakage()` |
+| I_on vs Vdd curve | the Vdd exponent `KAPPA` | `deck_iv_vs_vdd()` |
+
+Those become the coefficients of the compact model — exactly the relationship
+a Liberty file has to a static timing engine. After calibration the fast model
+and real SPICE agree by construction, and the Monte-Carlo loop stays fast.
+
+```bash
+fabaware-run --spice          # characterize with ngspice, then optimize
+```
+
+Without ngspice installed the step is reported as skipped and the run
+continues on the built-in model.
+
+---
+
+## 3. OpenSTA — real static timing analysis
+
+`backends/opensta.py` runs a genuine timing engine on the netlist. Two things
+had to exist before this was possible:
+
+**A Liberty timing library** (`backends/liberty.py`). OpenSTA has no built-in
+cell timing, so we *generate* one — a virtual 28 nm PDK. Every cell in our
+library is emitted at three drive strengths with NLDM delay tables sampled
+from the same gate equation the engine uses, so OpenSTA and our model agree by
+construction. Supply a real PDK (`--liberty sky130.lib`) and this is bypassed.
+
+**A structural Verilog netlist** (`backends/emit.py`). The optimizer's chosen
+drive strengths are baked into the cell names (`NAND2_X2`, not `NAND2`), so
+the baseline and the AI-optimized design become two ordinary netlists any
+third-party tool can read.
+
+### Cross-check, not replacement
+
+OpenSTA is deliberately **not** used inside the optimizer's inner loop: it
+would need thousands of invocations. It is used once at the end — which is
+what actually matters, because it turns "our arithmetic says the yield
+improved" into "an independent timing engine says the design got faster":
+
+```bash
+fabaware-run --sta            # optimize, then verify with OpenSTA
+```
+
+```
+  Tool cross-check
+  ------------------------------------------------------------------
+  static timing : OpenSTA  [/usr/bin/sta]
+    clock period: 435.0 ps
+    baseline   : worst slack -3.2 ps   (71 endpoints)
+    optimized  : worst slack +57.6 ps   (71 endpoints)
+    improvement : +60.8 ps
+    verdict     : OpenSTA independently confirms the optimization improved timing
+  ------------------------------------------------------------------
+```
+
+OpenSTA gives one deterministic slack; it does not know about our within-die
+variation. `slack_to_yield()` combines the two: the chip passes if the random
+variation does not eat the slack.
+
+---
+
+## 4. Installing the rest on your own machine
 
 These need `apt` (or your distro's package manager), which works on a normal
 laptop even though it is blocked in some sandboxes.
@@ -121,7 +208,7 @@ export FABAWARE_OPENROAD=/opt/OpenROAD/bin/openroad
 
 ---
 
-## 3. Getting a real PDK
+## 5. Getting a real PDK
 
 The only fully open process design kit is **SkyWater SKY130** (130 nm):
 
@@ -137,7 +224,7 @@ project needs to claim, and say which you picked.
 
 ---
 
-## 4. How each swap works
+## 6. How each swap works
 
 The optimizer never talks to a tool directly. It only needs something that can
 answer *"how good is this configuration?"* — so swapping a layer is a matter
@@ -154,18 +241,29 @@ def evaluate(netlist, trial, K, seed) -> EvalResult:
 | OpenSTA for `sta.py` | `evaluate()` | returns `EvalResult` |
 | OpenROAD for `pd.py` | `place_and_route()` | returns `PhysResult` |
 
-Concretely, an OpenSTA backend would:
+The **ngspice** swap is done: `calibrate()` measures Ion / Ioff / the Vdd
+exponent once, and `apply_calibration()` writes them into `compact.py`. Only
+the parameters SPICE can actually determine are overwritten; the geometric
+parts of the model are left alone, and the console prints exactly what changed.
 
-1. write the netlist and the trial's drive strengths to a Verilog netlist
-2. emit an SDC with `create_clock -period <T_SPEC>`
-3. run `sta -no_splash -exit script.tcl`
-4. parse `report_timing` and `report_power` back into `EvalResult`
+The **OpenSTA** swap is done, but as a *cross-check* rather than a replacement
+(see §3). Concretely `run_sta_crosscheck()`:
 
-The Monte-Carlo loop and the optimizer would not change at all.
+1. writes the netlist, with the trial's drive strengths in the cell names
+2. generates a Liberty library for that configuration
+3. emits an SDC with `create_clock -period <T_SPEC>`
+4. runs `sta -no_splash -exit script.tcl`
+5. parses `report_checks`, `report_worst_slack`, `report_power`, `report_area`
+
+The Monte-Carlo loop and the optimizer do not change at all.
+
+**OpenROAD** is the one layer still on our own model. Place-and-route needs
+real cell layouts (LEF), and without a PDK there is nothing to route with, so
+there is no meaningful partial step here — it is all or nothing.
 
 ---
 
-## 5. What stays ours
+## 7. What stays ours
 
 `optimizer.py` is the research contribution. There is no standard tool for
 "choose drive strengths, sizing ratios, metal layers and density to maximise
@@ -175,15 +273,25 @@ search works on a real PDK with real timing.
 
 ---
 
-## 6. Honest scope after the migration
+## 8. Honest scope after the migration
 
 - ✅ **RTL entry and synthesis are real.** Verilog in, Yosys netlist out.
-- ⚠️ **Timing, layout and DRC are still our models** until ngspice / OpenSTA /
-  OpenROAD are installed. The numbers they produce are consistent and
-  calibrated, but they are not sign-off numbers.
-- ⚠️ **The cell library is virtual** until you supply a `.lib`.
+- ✅ **Transistor characterization becomes real** the moment `ngspice` is on
+  `PATH` — `--spice` measures Ion / Ioff / the Vdd exponent with BSIM and fits
+  the compact model to them.
+- ✅ **Static timing becomes real** the moment `sta` is on `PATH` — `--sta`
+  times the same two netlists with an independent engine and reports whether
+  it confirms the improvement.
+- ⚠️ **Place & route is still our model.** OpenROAD needs a real PDK to be
+  meaningful, so there is no useful partial integration.
+- ⚠️ **The cell library is virtual** until you supply a `.lib`. The generated
+  Liberty file is self-consistent with our model — it is a prediction, not a
+  measurement, and it is labelled as such in the file header.
+
+Run `python3 scripts/verify_real_backends.py` on your machine to see exactly
+which of these is live for you.
 
 The scope statement still applies: *a fabrication-aware, open-source EDA
 optimization framework evaluated through transistor simulation and
-RTL-to-gate netlist experiments.* With Yosys integrated, the "RTL-to-gate"
-half of that sentence is now literally true.
+RTL-to-gate netlist experiments.* With Yosys integrated the "RTL-to-gate" half
+is literally true; with ngspice and OpenSTA installed, both halves are.

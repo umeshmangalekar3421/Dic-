@@ -67,6 +67,12 @@ def main(argv=None) -> int:
     ap.add_argument("--no-calibrate", action="store_true",
                     help="keep the default clock period instead of "
                          "auto-calibrating it to the loaded netlist")
+    ap.add_argument("--spice", action="store_true",
+                    help="characterize the transistors with real ngspice "
+                         "(BSIM) and calibrate the compact model from it")
+    ap.add_argument("--sta", action="store_true",
+                    help="verify the result with real OpenSTA: times the "
+                         "baseline and optimized netlists independently")
     ap.add_argument("--quiet", action="store_true", help="suppress progress output")
     args = ap.parse_args(argv)
 
@@ -118,6 +124,20 @@ def main(argv=None) -> int:
     t_opt = time.time() - t0
     _print_config("AI-OPTIMIZED", opt.trial, opt.result)
     print(f"\n    {opt.n_evals} statistical-timing evaluations in {t_opt:.1f} s")
+
+    # ------------------------------------------------------------------
+    # optional cross-check against the real EDA tools
+    # ------------------------------------------------------------------
+    if args.spice or args.sta:
+        from .backends import crosscheck as cc
+        print("\n[X] Cross-checking against the real EDA tools ...")
+        report_cc = cc.crosscheck(
+            nl, base_trial, opt.trial, sta.T_SPEC,
+            out_dir=os.path.join(args.out, "crosscheck"),
+            liberty_path=args.liberty,
+            do_sta=args.sta, do_spice=args.spice,
+        )
+        print(cc.format_crosscheck(report_cc))
 
     print("\n[4/4] Generating report ...")
     paths = report_mod.build_report(

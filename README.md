@@ -92,8 +92,11 @@ pip install -e .
 fabaware-run                 # full flow → reports/report.html + results.json
 fabaware-run --chips 500     # more Monte-Carlo chips (default 200)
 fabaware-run --real          # synthesize rtl/fab32.v with REAL Yosys
+fabaware-run --spice         # characterize transistors with REAL ngspice
+fabaware-run --sta           # verify the result with REAL OpenSTA
 fabaware-web                 # live dashboard on http://localhost:8000
-pytest -q                    # 50 tests
+python3 scripts/verify_real_backends.py    # which real tools are live?
+pytest -q                    # 94 tests
 ```
 
 ## Real EDA tools
@@ -104,9 +107,10 @@ Python models when they are not — chosen automatically, per layer.
 | Layer | Python model | Real tool | Status |
 |---|---|---|---|
 | RTL synthesis | `design.py` | **Yosys** | ✅ **real — runs today (`--real`)** |
-| Transistor model | `compact.py` | ngspice + BSIM | backend ready |
-| Static timing | `sta.py` | OpenSTA | backend ready |
-| Place & route | `pd.py` | OpenROAD | backend ready |
+| Transistor model | `compact.py` | ngspice + BSIM | ✅ **real — `--spice`** |
+| Static timing | `sta.py` | OpenSTA | ✅ **real — `--sta`** |
+| Cell timing library | *(ours)* | Liberty `.lib` | ✅ generated virtual 28 nm PDK |
+| Place & route | `pd.py` | OpenROAD | 🔧 detection only |
 | Optimization | `optimizer.py` | *(none standard)* | ⭐ **ours** |
 
 With `--real`, `rtl/fab32.v` goes through genuine Yosys, which produced
@@ -119,6 +123,12 @@ python -c "from fabaware.backends import tools; print(tools.summary())"
 bash scripts/install_real_tools.sh          # install the rest
 fabaware-run --real --liberty sky130.lib    # map onto a real PDK
 ```
+
+`--spice` measures Ion / Ioff / the Vdd exponent with BSIM once and fits the
+compact model to them — characterize-then-fit, so the Monte-Carlo loop stays
+fast. `--sta` writes the baseline and AI-optimized designs out as ordinary
+gate-level netlists and has **OpenSTA time both independently**, which turns
+"our arithmetic says yield improved" into "a third-party engine agrees".
 
 See [`docs/REAL_TOOLS.md`](docs/REAL_TOOLS.md) for how each swap works.
 
@@ -150,8 +160,13 @@ fabaware/
   backends/
     tools.py     auto-detection of Yosys / ngspice / OpenSTA / OpenROAD
     yosys.py     real RTL synthesis + netlist import
-tests/          50 tests: physics, statistics, Yosys backend, reproducibility
-scripts/        install_real_tools.sh
+    ngspice.py   real BSIM characterization + compact-model calibration
+    opensta.py   real static timing: SDC/TCL generation + report parsing
+    liberty.py   Liberty timing library (virtual 28 nm PDK)
+    emit.py      structural Verilog emitter (drive strengths in cell names)
+    crosscheck.py  runs the real tools and reports whether they agree
+tests/          94 tests: physics, statistics, all backends, reproducibility
+scripts/        install_real_tools.sh, verify_real_backends.py
 reports/        generated: report.html, results.json, figures/
 ```
 

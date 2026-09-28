@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+import uuid
 
 from .library import LIBRARY
 
@@ -44,6 +45,7 @@ class Netlist:
     hint: Dict[int, int] = field(default_factory=dict)     # instance idx -> placement cluster
     pi_hint: Dict[str, int] = field(default_factory=dict)  # PI net -> cluster it belongs to
     dff_q_of: Dict[int, str] = field(default_factory=dict)  # DFF instance idx -> Q net
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     # ------------------------------------------------------------------
     def __post_init__(self) -> None:
@@ -76,6 +78,30 @@ class Netlist:
             assert n in self.net_driver, f"missing net {n}"
             self.net_loads[n].append(inst.idx)
         return out
+
+    def gate_named(self, cell: str, in_nets: List[str], out_net: str,
+                   hint: int = 9999) -> str:
+        """Place a gate whose output net name is already known.
+
+        Used when importing a netlist produced by a real synthesis tool,
+        where the net names come from the tool rather than from us.
+        """
+        assert cell in LIBRARY and not LIBRARY[cell].flop, cell
+        assert out_net not in self.net_driver or self.net_driver[out_net] == -1, \
+            f"net {out_net} already driven"
+        inst = Instance(idx=len(self.instances), cell=cell,
+                        in_nets=list(in_nets), out_net=out_net)
+        self.instances.append(inst)
+        self.hint[inst.idx] = hint
+        self.net_driver[out_net] = inst.idx
+        if out_net not in self.net_loads:
+            self.net_loads[out_net] = []
+        for n in in_nets:
+            if n not in self.net_driver:
+                self.net_driver[n] = -1
+                self.net_loads[n] = []
+            self.net_loads[n].append(inst.idx)
+        return out_net
 
     def dff(self, d_net: str, name: str, q_net: Optional[str] = None,
             hint: int = 9999) -> str:

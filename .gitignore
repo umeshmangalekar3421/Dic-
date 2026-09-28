@@ -10,7 +10,9 @@ venv/
 
 # generated run artifacts
 reports/
+reports_real/
 runs/
+build/
 *.png
 !docs/**/*.png
 

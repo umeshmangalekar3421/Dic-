@@ -91,9 +91,36 @@ pip install -e .
 
 fabaware-run                 # full flow → reports/report.html + results.json
 fabaware-run --chips 500     # more Monte-Carlo chips (default 200)
+fabaware-run --real          # synthesize rtl/fab32.v with REAL Yosys
 fabaware-web                 # live dashboard on http://localhost:8000
-pytest -q                    # 34 tests
+pytest -q                    # 50 tests
 ```
+
+## Real EDA tools
+
+FabAware-Opt runs on **real tools when they are installed** and on its own
+Python models when they are not — chosen automatically, per layer.
+
+| Layer | Python model | Real tool | Status |
+|---|---|---|---|
+| RTL synthesis | `design.py` | **Yosys** | ✅ **real — runs today (`--real`)** |
+| Transistor model | `compact.py` | ngspice + BSIM | backend ready |
+| Static timing | `sta.py` | OpenSTA | backend ready |
+| Place & route | `pd.py` | OpenROAD | backend ready |
+| Optimization | `optimizer.py` | *(none standard)* | ⭐ **ours** |
+
+With `--real`, `rtl/fab32.v` goes through genuine Yosys, which produced
+**844 gates / 35 flops / 3,298 transistors** and chose a Brent-Kung
+carry-lookahead adder on its own. On that netlist the flow reaches
+**34.5% → 100% timing yield and DRC 225 → 0**.
+
+```bash
+python -c "from fabaware.backends import tools; print(tools.summary())"
+bash scripts/install_real_tools.sh          # install the rest
+fabaware-run --real --liberty sky130.lib    # map onto a real PDK
+```
+
+See [`docs/REAL_TOOLS.md`](docs/REAL_TOOLS.md) for how each swap works.
 
 ### Requirements
 
@@ -107,6 +134,8 @@ and no external EDA tool to install.
 ## Repository layout
 
 ```
+rtl/
+  fab32.v        the design in real synthesizable Verilog (read by Yosys)
 fabaware/
   compact.py     compact MOSFET model (the physics every number derives from)
   library.py     28nm-class standard-cell library with A/B timing coefficients
@@ -118,7 +147,11 @@ fabaware/
   report.py      self-contained HTML report + results.json
   cli.py         fabaware-run / fabaware-demo
   web.py         live dashboard
-tests/          34 tests: physics monotonicity, MC/nominal agreement, fuzz
+  backends/
+    tools.py     auto-detection of Yosys / ngspice / OpenSTA / OpenROAD
+    yosys.py     real RTL synthesis + netlist import
+tests/          50 tests: physics, statistics, Yosys backend, reproducibility
+scripts/        install_real_tools.sh
 reports/        generated: report.html, results.json, figures/
 ```
 
@@ -158,8 +191,10 @@ of the Pareto frontier rather than at the far corner.
 
 | Document | Contents |
 |----------|----------|
+| [`docs/BEGINNERS_GUIDE.md`](docs/BEGINNERS_GUIDE.md) | Start here if chips/EDA are new to you |
 | [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) | Models, equations, calibration and their justification |
 | [`docs/VALIDATION.md`](docs/VALIDATION.md) | What was verified, and the evidence |
+| [`docs/REAL_TOOLS.md`](docs/REAL_TOOLS.md) | Migrating to Yosys / ngspice / OpenSTA / OpenROAD |
 | [`docs/TEAM.md`](docs/TEAM.md) | Division of work for a three-student team |
 | [`docs/PRESENTATION.md`](docs/PRESENTATION.md) | How to demo it, and likely questions |
 

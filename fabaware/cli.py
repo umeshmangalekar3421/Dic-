@@ -58,14 +58,45 @@ def main(argv=None) -> int:
                     help="optimization time budget in seconds (default 180)")
     ap.add_argument("-o", "--out", default="reports",
                     help="output directory (default reports)")
+    ap.add_argument("--real", action="store_true",
+                    help="synthesize the RTL with the real Yosys tool "
+                         "instead of the built-in Python netlist")
+    ap.add_argument("--liberty", default=None,
+                    help="optional .lib file: map onto a real cell library "
+                         "with Yosys+ABC instead of the virtual 28nm library")
+    ap.add_argument("--no-calibrate", action="store_true",
+                    help="keep the default clock period instead of "
+                         "auto-calibrating it to the loaded netlist")
     ap.add_argument("--quiet", action="store_true", help="suppress progress output")
     args = ap.parse_args(argv)
 
     _banner()
     t_all = time.time()
 
-    print("\n[1/4] Building the FAB-32 design netlist ...")
-    nl = build_fab32()
+    from .backends import tools as _tools
+    print("\n" + _tools.summary())
+
+    print("\n[1/4] Building the design netlist ...")
+    if args.real:
+        from .backends.yosys import build_from_verilog
+        try:
+            nl = build_from_verilog(liberty=args.liberty)
+            print("      source: rtl/fab32.v synthesized by REAL Yosys")
+        except Exception as exc:
+            print(f"      Yosys unavailable ({exc}); "
+                  f"falling back to the Python netlist")
+            nl = build_fab32()
+    else:
+        nl = build_fab32()
+        print("      source: built-in Python netlist "
+              "(pass --real to synthesize with Yosys)")
+
+    if not args.no_calibrate:
+        period, y0 = sta.calibrate_target(nl, target_yield=0.35, K=args.chips,
+                                          seed=args.seed)
+        print(f"      calibrated clock period {period:.0f} ps "
+              f"({sta.freq_ghz():.2f} GHz) -> baseline yield {100*y0:.1f}%")
+
     st = nl.stats()
     print(f"      {st['gates']} gates, {st['dffs']} flip-flops, {st['nets']} nets,")
     print("      %d transistors, %d timing endpoints" % (

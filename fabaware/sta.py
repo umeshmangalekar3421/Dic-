@@ -44,6 +44,62 @@ def freq_ghz() -> float:
 def freq_mhz() -> float:
     """Target clock frequency in MHz, derived from T_SPEC (ps)."""
     return 1e6 / T_SPEC
+
+
+def set_target_period(ps: float) -> None:
+    """Set the target clock period (ps). Keeps T_SPEC/F_TARGET in sync."""
+    global T_SPEC, F_TARGET
+    T_SPEC = float(ps)
+    F_TARGET = 1.0 / (T_SPEC * 1e-12)
+
+
+def nominal_critical_path(nl: "Netlist", trial=None) -> float:
+    """Nominal critical-path delay (ps) of a netlist, ignoring the target."""
+    if trial is None:
+        from .optimizer import BASELINE_TRIAL
+        trial = BASELINE_TRIAL
+    saved = T_SPEC
+    try:
+        set_target_period(1e9)
+        r = evaluate(nl, trial, K=8, seed=1, do_vmin=False)
+        return max(d for _, d, _ in r.paths)
+    finally:
+        set_target_period(saved)
+
+
+def calibrate_target(nl: "Netlist", trial=None, target_yield: float = 0.35,
+                     K: int = 200, seed: int = 42, max_iter: int = 14,
+                     tol: float = 0.05):
+    """
+    Binary-search the clock period that puts the *baseline* yield near
+    ``target_yield``.
+
+    Different netlists have very different critical paths — a hand-built
+    carry-select adder and a Yosys-synthesized Brent-Kung adder differ by
+    several hundred ps — so a hard-coded period would put one of them
+    trivially at 100% yield and the other at 0%. Calibrating makes the
+    experiment meaningful for whatever netlist is loaded.
+    """
+    if trial is None:
+        from .optimizer import BASELINE_TRIAL
+        trial = BASELINE_TRIAL
+    d = nominal_critical_path(nl, trial)
+    lo, hi = 0.55 * d, 1.80 * d      # tight -> low yield, loose -> high yield
+    best = d
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        set_target_period(mid)
+        y = evaluate(nl, trial, K=K, seed=seed, do_vmin=False).yield_nom
+        best = mid
+        if abs(y - target_yield) <= tol:
+            break
+        if y < target_yield:
+            lo = mid                  # too tight -> relax the period
+        else:
+            hi = mid                  # too loose -> tighten the period
+    set_target_period(best)
+    y = evaluate(nl, trial, K=K, seed=seed, do_vmin=False).yield_nom
+    return best, y
 ACTIVITY = 0.12           # switching activity factor
 PO_LOAD_FF = 0.30         # load capacitance of a primary output (fF)
 EXP_VEFF = 1.4            # velocity-saturation-aware overdrive exponent
@@ -183,15 +239,21 @@ def _extract_paths(nl: Netlist, phys: PhysResult, trial: Trial,
             next_slot += 1
         buf_slots[net] = slots
 
-    A_arr = np.array([LIBRARY[i.cell].a for i in comb])
-    B_arr = np.array([LIBRARY[i.cell].b for i in comb])
+    A_arr = np.array([LIBRARY[inst.cell].a for inst in comb])
+    B_arr = np.array([LIBRARY[inst.cell].b for inst in comb])
     A_buf = LIBRARY["BUF"].a
     B_buf = LIBRARY["BUF"].b
     cext_buf_in = cin_of(LIBRARY["BUF"], BUF_DRIVE)
 
+    # global instance index -> position within the combinational subset.
+    # These differ whenever flip-flops are interleaved with gates, which is
+    # exactly what a real synthesis tool's netlist looks like.
+    slot_of = {inst.idx: j for j, inst in enumerate(comb)}
+
     # stage delay (nominal) for a gate outputting net n
     def gate_stage(inst: int, n_out: str) -> float:
-        return (A_arr[inst] + B_arr[inst] * cext[n_out]) / (drive[inst] * rf)
+        j = slot_of[inst]
+        return (A_arr[j] + B_arr[j] * cext[n_out]) / (drive[j] * rf)
 
     # full net-transfer delay (nominal) for driver of net n
     net_delay: Dict[str, float] = {}
@@ -258,7 +320,8 @@ def _extract_paths(nl: Netlist, phys: PhysResult, trial: Trial,
                     else:
                         ce = cext_last
                     stages.append((sl, A_buf + B_buf * ce))
-            stages.append((d, A_arr[d] + B_arr[d] * cext[cur]))
+            j = slot_of[d]
+            stages.append((j, A_arr[j] + B_arr[j] * cext[cur]))
             # pick the input that achieved the max arrival
             best = None
             for n in nl.instances[d].in_nets:
@@ -423,11 +486,19 @@ _phys_cache: Dict[int, PhysResult] = {}
 
 
 def place_and_route_cached(nl: Netlist, trial: Trial) -> PhysResult:
+    """Cache placement per (netlist, trial).
+
+    The netlist identity is part of the key: two different netlists in the
+    same process (e.g. the hand-built one and a Yosys-synthesized one) must
+    never share a cached layout, or the timing engine would be fed the other
+    design's wire lengths and net names.
+    """
     from .pd import place_and_route
-    key = hash((
+    key = (
+        nl.uid,
         tuple(sorted(trial.drives.items())), trial.ratio, trial.nbuf,
         trial.layer_short, trial.layer_mid, trial.layer_long, trial.density,
-    ))
+    )
     if key not in _phys_cache:
         _phys_cache[key] = place_and_route(nl, trial)
     return _phys_cache[key]

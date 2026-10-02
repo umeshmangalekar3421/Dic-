@@ -15,7 +15,8 @@ industry tools.
 | Static timing | `sta.py` | **OpenSTA** | `backends/opensta.py` | ✅ written — runs the moment `sta` is installed |
 | Cell timing library | *(ours)* | **Liberty (.lib)** | `backends/liberty.py` | ✅ generates a virtual 28 nm PDK |
 | Netlist hand-off | *(ours)* | **structural Verilog** | `backends/emit.py` | ✅ verified by Yosys elaboration |
-| Place & route | `pd.py` | **OpenROAD** | `backends/tools.py` (detection) | 🔧 detection only — P&R still our model |
+| Place & route | `pd.py` | **OpenROAD** | `backends/openroad.py` | ✅ written — needs OpenROAD **and** a PDK |
+| Cell mapping | *(ours)* | **SKY130 PDK** | `backends/pdk.py` | ✅ written — needs `volare enable --pdk sky130` |
 | Optimization | `optimizer.py` | *(none standard)* | — | ⭐ **ours — unchanged, tool-agnostic** |
 
 "Written" means the deck/SDC/TCL generation, tool invocation and
@@ -170,7 +171,53 @@ variation does not eat the slack.
 
 ---
 
-## 4. Installing the rest on your own machine
+## 4. OpenROAD — real place & route
+
+`backends/openroad.py` runs the genuine RTL-to-GDSII chain: floorplan →
+global placement → detailed placement → (clock tree) → global route →
+detailed route.
+
+**This is the one layer with no fallback.** Placement needs real cell *shapes*,
+and routing needs a real layer stack. There is nothing meaningful to
+approximate with — a "route" through invented geometry would be fiction. So
+`run_pnr()` raises with an actionable message when no PDK is present, rather
+than quietly returning a made-up number.
+
+That makes it the highest-value integration, though: **wire length and DRC
+count stop being predictions of our model and become measurements of an actual
+routed layout.** Those two numbers underpin the area and DRC claims in every
+report.
+
+### Cell mapping (`backends/pdk.py`)
+
+Our library speaks our names (`NAND2_X2`); SKY130 speaks its own
+(`sky130_fd_sc_hd__nand2_2`). Names differ between foundries and even between
+libraries from one foundry, so nothing is hard-coded as certain. Each of our
+cell types declares a list of **candidate** names; the candidates are checked
+against the cells that actually exist in the Liberty file; the first that
+exists wins. A cell the PDK genuinely lacks is reported as unmapped rather
+than silently emitted — a link failure inside OpenROAD is a much worse place
+to discover that.
+
+```bash
+fabaware-run --pdk sky130 --pdr      # map onto SKY130, then route for real
+fabaware-run --pdk sky130 --pdr --sta --spice   # every layer real
+```
+
+### Installing the PDK
+
+```bash
+pip install volare
+volare enable --pdk sky130 <version>     # ~333 MB compressed
+```
+
+OpenROAD is not in any distro's repositories — download a prebuilt binary from
+the [OpenROAD releases](https://github.com/Precision-Innovations/OpenROAD/releases)
+page, or build from source.
+
+---
+
+## 5. Installing the rest on your own machine
 
 These need `apt` (or your distro's package manager), which works on a normal
 laptop even though it is blocked in some sandboxes.
@@ -208,7 +255,7 @@ export FABAWARE_OPENROAD=/opt/OpenROAD/bin/openroad
 
 ---
 
-## 5. Getting a real PDK
+## 6. Getting a real PDK
 
 The only fully open process design kit is **SkyWater SKY130** (130 nm):
 
@@ -224,7 +271,7 @@ project needs to claim, and say which you picked.
 
 ---
 
-## 6. How each swap works
+## 7. How each swap works
 
 The optimizer never talks to a tool directly. It only needs something that can
 answer *"how good is this configuration?"* — so swapping a layer is a matter
@@ -263,7 +310,7 @@ there is no meaningful partial step here — it is all or nothing.
 
 ---
 
-## 7. What stays ours
+## 8. What stays ours
 
 `optimizer.py` is the research contribution. There is no standard tool for
 "choose drive strengths, sizing ratios, metal layers and density to maximise
@@ -273,7 +320,7 @@ search works on a real PDK with real timing.
 
 ---
 
-## 8. Honest scope after the migration
+## 9. Honest scope after the migration
 
 - ✅ **RTL entry and synthesis are real.** Verilog in, Yosys netlist out.
 - ✅ **Transistor characterization becomes real** the moment `ngspice` is on
@@ -282,8 +329,11 @@ search works on a real PDK with real timing.
 - ✅ **Static timing becomes real** the moment `sta` is on `PATH` — `--sta`
   times the same two netlists with an independent engine and reports whether
   it confirms the improvement.
-- ⚠️ **Place & route is still our model.** OpenROAD needs a real PDK to be
-  meaningful, so there is no useful partial integration.
+- ✅ **Place & route becomes real** once OpenROAD *and* a PDK are installed —
+  `--pdk sky130 --pdr` routes both configurations and reports measured area,
+  wire length and DRC rather than predicted ones.
+- ⚠️ **A PDK is a hard requirement for P&R**, unlike the other layers. There
+  is deliberately no fallback, because there is nothing honest to fall back to.
 - ⚠️ **The cell library is virtual** until you supply a `.lib`. The generated
   Liberty file is self-consistent with our model — it is a prediction, not a
   measurement, and it is labelled as such in the file header.

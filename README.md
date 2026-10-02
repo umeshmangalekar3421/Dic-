@@ -96,7 +96,8 @@ fabaware-run --spice         # characterize transistors with REAL ngspice
 fabaware-run --sta           # verify the result with REAL OpenSTA
 fabaware-web                 # live dashboard on http://localhost:8000
 python3 scripts/verify_real_backends.py    # which real tools are live?
-pytest -q                    # 94 tests
+fabaware-run --pdk sky130 --pdr  # route for REAL with OpenROAD
+pytest -q                    # 120 tests
 ```
 
 ## Real EDA tools
@@ -110,7 +111,8 @@ Python models when they are not — chosen automatically, per layer.
 | Transistor model | `compact.py` | ngspice + BSIM | ✅ **real — `--spice`** |
 | Static timing | `sta.py` | OpenSTA | ✅ **real — `--sta`** |
 | Cell timing library | *(ours)* | Liberty `.lib` | ✅ generated virtual 28 nm PDK |
-| Place & route | `pd.py` | OpenROAD | 🔧 detection only |
+| Place & route | `pd.py` | **OpenROAD** | ✅ **real — `--pdr`** (needs a PDK) |
+| Cell library | *(ours)* | **SKY130 PDK** | ✅ **real — `--pdk sky130`** |
 | Optimization | `optimizer.py` | *(none standard)* | ⭐ **ours** |
 
 With `--real`, `rtl/fab32.v` goes through genuine Yosys, which produced
@@ -132,7 +134,22 @@ gate-level netlists and has **OpenSTA time both independently**, which turns
 
 See [`docs/REAL_TOOLS.md`](docs/REAL_TOOLS.md) for how each swap works.
 
-### Requirements
+### Storage
+
+| | Size |
+|---|---|
+| Project source | 332 KB |
+| Python dependencies | 317 MB |
+| Yosys + ngspice (`apt`) | ~85 MB |
+| **Recommended total** | **~500 MB** |
+| + OpenROAD (prebuilt) | + ~1 GB |
+| + SKY130 PDK (compressed download) | + ~333 MB |
+
+BSIM and Verilog cost nothing to install: BSIM is a ~2 KB text model card
+shipped inside `backends/ngspice.py`, and Verilog is a language — the RTL is
+2 KB of our own code. The generated Liberty PDK is 55 KB, produced on the fly.
+
+## Requirements
 
 Python 3.9+, and `numpy`, `scipy`, `scikit-learn`, `matplotlib`. That is all.
 
@@ -164,8 +181,10 @@ fabaware/
     opensta.py   real static timing: SDC/TCL generation + report parsing
     liberty.py   Liberty timing library (virtual 28 nm PDK)
     emit.py      structural Verilog emitter (drive strengths in cell names)
+    openroad.py  real place & route: floorplan -> place -> route
+    pdk.py       PDK discovery + our cells -> real PDK cells
     crosscheck.py  runs the real tools and reports whether they agree
-tests/          94 tests: physics, statistics, all backends, reproducibility
+tests/          120 tests: physics, statistics, all backends, reproducibility
 scripts/        install_real_tools.sh, verify_real_backends.py
 reports/        generated: report.html, results.json, figures/
 ```

@@ -44,17 +44,31 @@ def snap_drive(drive: float, drives=DRIVES) -> float:
     return min(drives, key=lambda d: abs(d - float(drive)))
 
 
-def cell_instance_name(nl: Netlist, inst, trial: Trial) -> str:
-    """Map an instance + trial to a Liberty cell name."""
+def cell_instance_name(nl: Netlist, inst, trial: Trial,
+                       cellmap=None) -> str:
+    """
+    Map an instance + trial to a Liberty cell name.
+
+    With ``cellmap`` (a :class:`fabaware.backends.pdk.CellMap`) the real PDK
+    cell name is used; otherwise our virtual library's own naming.
+    """
     if inst.is_dff:
-        return "DFF_X1"
-    drive = trial.drives.get(inst.cell, 1.0)
-    return cell_name_for(inst.cell, snap_drive(drive))
+        return (cellmap.name_for("DFF", 1.0) if cellmap else None) or "DFF_X1"
+    drive = snap_drive(trial.drives.get(inst.cell, 1.0))
+    if cellmap is not None:
+        real = cellmap.name_for(inst.cell, drive)
+        if real:
+            return real
+    return cell_name_for(inst.cell, drive)
 
 
 def write_netlist(nl: Netlist, trial: Trial, path: str,
-                  module: str = "fab32") -> str:
-    """Write a gate-level Verilog netlist for ``nl`` under configuration ``trial``."""
+                  module: str = "fab32", cellmap=None) -> str:
+    """
+    Write a gate-level Verilog netlist for ``nl`` under configuration ``trial``.
+
+    ``cellmap`` optionally retargets the netlist onto a real PDK's cells.
+    """
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
 
     # stable rename so that every net is a legal identifier and collisions are gone
@@ -113,12 +127,27 @@ def write_netlist(nl: Netlist, trial: Trial, path: str,
         if inst.is_dff:
             d_net = nm(inst.in_nets[0])
             q_net = nm(nl.dff_q_of[inst.idx])
-            w(f"  DFF_X1 u_dff{inst.idx} ( "
-              f".D({d_net}), .CLK({CLOCK_NET}), .Q({q_net}) ) ;")
+            dff_cell = (cellmap.name_for("DFF", 1.0) if cellmap else None) or "DFF_X1"
+            # a real flop may name its pins differently (D/CLK/Q, D/CK/Q, ...)
+            dpin, cpin, qpin = "D", "CLK", "Q"
+            if cellmap is not None:
+                p = cellmap.pins_for("DFF", 1.0)
+                if p and len(p) >= 2:
+                    dpin, qpin = p[0], p[-1]
+                cpin = CLOCK_NET
+            w(f"  {dff_cell} u_dff{inst.idx} ( "
+              f".{dpin}({d_net}), .{cpin}({CLOCK_NET}), .{qpin}({q_net}) ) ;")
         else:
-            cell = cell_instance_name(nl, inst, trial)
-            conns = ".Y({})".format(nm(inst.out_net))
-            for pin, net in zip(_INPUT_PINS(inst.cell), inst.in_nets):
+            cell = cell_instance_name(nl, inst, trial, cellmap)
+            drive = snap_drive(trial.drives.get(inst.cell, 1.0))
+            pins = _INPUT_PINS(inst.cell)
+            ypin = "Y"
+            if cellmap is not None:
+                p = cellmap.pins_for(inst.cell, drive)
+                if p and len(p) >= len(inst.in_nets) + 1:
+                    pins, ypin = p[:len(inst.in_nets)], p[-1]
+            conns = f".{ypin}({nm(inst.out_net)})"
+            for pin, net in zip(pins, inst.in_nets):
                 conns += f", .{pin}({nm(net)})"
             w(f"  {cell} u_{n_gate} ( {conns} ) ;")
             n_gate += 1

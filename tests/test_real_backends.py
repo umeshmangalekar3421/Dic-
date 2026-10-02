@@ -14,7 +14,8 @@ import re
 
 import pytest
 
-from fabaware.backends import emit, liberty, ngspice, opensta, tools
+from fabaware.backends import (emit, liberty, ngspice, openroad,
+                               opensta, pdk, tools)
 
 
 # ---------------------------------------------------------------------------
@@ -571,3 +572,220 @@ def _write_cell_stubs(path: str) -> None:
              "output reg Q; always @(posedge CLK) Q <= D; endmodule")
     with open(path, "w") as f:
         f.write("\n".join(L) + "\n")
+
+
+# =====================================================================
+#  OpenROAD (place & route) + PDK
+# =====================================================================
+
+OPENROAD_AREA_RPT = """
+Design area 1504 u^2 42% utilization.
+Core area 3600 u^2.
+"""
+
+OPENROAD_SETUP_RPT = """
+worst slack max -12.3456
+"""
+
+OPENROAD_ROUTE_LOG = """
+[INFO GRT-0018] Total wire length = 18426.3 um.
+[INFO GRT-0019] Congestion: 1000
+[INFO DRT-0199]   Number of violations = 17
+"""
+
+OPENROAD_DRC_RPT = """
+  Number of violations = 17
+"""
+
+
+class TestOpenroad:
+
+    # ---------------- TCL generation ----------------
+
+    def test_tcl_reads_every_input_file(self):
+        tcl = openroad.write_tcl(
+            "/tmp/fab32.v", ["/pdk/lib.lib"], ["/pdk/t.tlef", "/pdk/c.lef"],
+            "/tmp/fab32.sdc")
+        assert "read_liberty /pdk/lib.lib" in tcl
+        assert "read_lef /pdk/t.tlef" in tcl
+        assert "read_lef /pdk/c.lef" in tcl
+        assert "read_verilog /tmp/fab32.v" in tcl
+        assert "read_sdc /tmp/fab32.sdc" in tcl
+        assert "link_design fab32" in tcl
+
+    def test_tcl_includes_the_full_pnr_stage_sequence(self):
+        tcl = openroad.write_tcl("/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc")
+        i = {k: tcl.index(k) for k in (
+            "initialize_floorplan", "global_placement",
+            "detailed_placement", "global_route", "detailed_route")}
+        assert i["initialize_floorplan"] < i["global_placement"]
+        assert i["global_placement"] < i["detailed_placement"]
+        assert i["detailed_placement"] < i["global_route"]
+        assert i["global_route"] < i["detailed_route"]
+
+    def test_density_reaches_the_tcl(self):
+        assert "-density 0.570" in openroad.write_tcl(
+            "/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc", density=0.57)
+
+    def test_die_is_larger_than_core(self):
+        tcl = openroad.write_tcl("/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc",
+                                 core_w_um=60.0, core_h_um=60.0)
+        die = re.search(r'-die_area "0 0 ([\d.]+) ([\d.]+)"', tcl)
+        core = re.search(r'-core_area "([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)"', tcl)
+        assert float(die.group(1)) > 60.0
+        assert float(core.group(3)) - float(core.group(1)) == pytest.approx(60.0)
+
+    def test_cts_and_route_are_optional(self):
+        assert "clock_tree_synthesis" not in openroad.write_tcl(
+            "/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc", do_cts=False)
+        assert "clock_tree_synthesis" in openroad.write_tcl(
+            "/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc", do_cts=True)
+        assert "detailed_route" not in openroad.write_tcl(
+            "/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc", do_route=False)
+
+    def test_tcl_ends_with_exit(self):
+        assert openroad.write_tcl(
+            "/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc").strip().endswith("exit")
+
+    def test_sdc_is_written_and_has_a_clock(self, tmp_path):
+        p = str(tmp_path / "p.sdc")
+        openroad.write_sdc(p, 435.0)
+        txt = open(p).read()
+        assert "create_clock" in txt
+        assert "435" in txt
+
+    # ---------------- report parsing ----------------
+
+    def test_parse_area(self):
+        assert openroad.parse_area(OPENROAD_AREA_RPT) == pytest.approx(1504.0)
+
+    def test_parse_utilization(self):
+        assert openroad.parse_utilization(OPENROAD_AREA_RPT) == pytest.approx(42.0)
+
+    def test_parse_area_returns_none_on_absence(self):
+        assert openroad.parse_area("nothing here") is None
+
+    def test_parse_wirelength(self):
+        assert openroad.parse_wirelength(OPENROAD_ROUTE_LOG) == pytest.approx(18426.3)
+
+    def test_parse_drc(self):
+        assert openroad.parse_drc(OPENROAD_ROUTE_LOG) == 17
+        assert openroad.parse_drc(OPENROAD_DRC_RPT) == 17
+
+    def test_parse_worst_slack(self):
+        assert openroad.parse_worst_slack(OPENROAD_SETUP_RPT) == pytest.approx(-12.3456)
+
+    def test_parse_missing_returns_none_not_exception(self):
+        for fn in (openroad.parse_area, openroad.parse_wirelength,
+                   openroad.parse_worst_slack, openroad.parse_utilization):
+            assert fn("") is None
+
+    # ---------------- result container ----------------
+
+    def test_summary_lists_the_measurements(self):
+        r = openroad.PnrResult(ok=True, area_um2=1504.0, worst_slack_ps=-3.2,
+                               wirelength_um=18426.0, drc_count=17)
+        s = r.summary
+        assert "1504" in s and "-3.2" in s and "18426" in s and "DRC 17" in s
+
+    def test_failed_run_reports_an_error_not_a_crash(self):
+        r = openroad.PnrResult(ok=False, error="OpenROAD: cannot open LEF")
+        assert r.area_um2 is None
+        assert "cannot open LEF" in r.error
+
+    # ---------------- execution guards ----------------
+
+    def test_run_pnr_refuses_without_lef(self):
+        with pytest.raises(RuntimeError) as e:
+            openroad.run_pnr("/n.v", ["/l.lib"], [], "/n.sdc")
+        assert "LEF" in str(e.value)
+
+    def test_run_pnr_refuses_without_openroad(self):
+        if tools.find("openroad"):
+            pytest.skip("openroad present")
+        with pytest.raises(RuntimeError) as e:
+            openroad.run_pnr("/n.v", ["/l.lib"], ["/l.lef"], "/n.sdc")
+        assert "OpenROAD" in str(e.value)
+
+
+class TestPdk:
+
+    def test_liberty_cells_extracts_names(self, tmp_path):
+        p = str(tmp_path / "t.lib")
+        with open(p, "w") as f:
+            f.write('library(x) {\n'
+                    '  cell (sky130_fd_sc_hd__inv_1) { area : 1 ; }\n'
+                    '  cell (sky130_fd_sc_hd__nand2_2) { area : 2 ; }\n'
+                    '  cell ("sky130_fd_sc_hd__dfrtp_1") { area : 3 ; }\n'
+                    '}\n')
+        got = pdk.liberty_cells(p)
+        assert "sky130_fd_sc_hd__inv_1" in got
+        assert "sky130_fd_sc_hd__nand2_2" in got
+        assert "sky130_fd_sc_hd__dfrtp_1" in got      # quoted form too
+
+    def test_pin_names_orders_inputs_then_output(self, tmp_path):
+        p = str(tmp_path / "t.lib")
+        with open(p, "w") as f:
+            f.write('cell (sky130_fd_sc_hd__nand2_1) {\n'
+                    '  pin (A) { direction : input ; }\n'
+                    '  pin (B) { direction : input ; }\n'
+                    '  pin (Y) { direction : output ; }\n'
+                    '}\n')
+        assert pdk.pin_names(p, "sky130_fd_sc_hd__nand2_1") == ["A", "B", "Y"]
+
+    def test_pin_names_excludes_clock_from_inputs(self, tmp_path):
+        p = str(tmp_path / "t.lib")
+        with open(p, "w") as f:
+            f.write('cell (sky130_fd_sc_hd__dfxtp_1) {\n'
+                    '  pin (CLK) { direction : input ; clock : true ; }\n'
+                    '  pin (D) { direction : input ; }\n'
+                    '  pin (Q) { direction : output ; }\n'
+                    '}\n')
+        pins = pdk.pin_names(p, "sky130_fd_sc_hd__dfxtp_1")
+        assert pins == ["D", "Q"]
+
+    def test_cellmap_only_maps_cells_that_exist(self, tmp_path):
+        """A candidate that is absent from the .lib must not be mapped."""
+        lib = str(tmp_path / "t.lib")
+        cells = ["sky130_fd_sc_hd__inv_1", "sky130_fd_sc_hd__inv_2",
+                 "sky130_fd_sc_hd__nand2_1", "sky130_fd_sc_hd__nor2_1",
+                 "sky130_fd_sc_hd__buf_1", "sky130_fd_sc_hd__dfxtp_1"]
+        with open(lib, "w") as f:
+            f.write("library(x) {\n")
+            for c in cells:
+                f.write(f'  cell ({c}) {{ area : 1 ; }}\n')
+            f.write("}\n")
+        fake = pdk.Pdk(name="sky130", root=str(tmp_path), corner_lib=lib,
+                       lefs=[], lib_dir=str(tmp_path))
+        cm = pdk.CellMap(fake)
+        assert cm.name_for("INV", 1.0) == "sky130_fd_sc_hd__inv_1"
+        assert cm.name_for("INV", 2.0) == "sky130_fd_sc_hd__inv_2"
+        # drive 4 does not exist -> fall back to a smaller one that does
+        assert cm.name_for("INV", 4.0) in cells
+        # XOR2 has no candidate in this tiny lib -> unmapped, not invented
+        assert cm.name_for("XOR2", 1.0) is None
+        assert any("XOR2" in u for u in cm.unmapped)
+
+    def test_cellmap_never_invents_a_cell_name(self, tmp_path):
+        lib = str(tmp_path / "empty.lib")
+        with open(lib, "w") as f:
+            f.write("library(x) {\n}\n")
+        fake = pdk.Pdk(name="sky130", root=str(tmp_path), corner_lib=lib,
+                       lefs=[], lib_dir=str(tmp_path))
+        cm = pdk.CellMap(fake)
+        assert cm.map == {}
+        assert cm.unmapped, "all cells should be reported unavailable"
+
+    def test_unavailable_pdk_returns_none(self):
+        assert pdk.find_pdk("sky130", root="/nonexistent/pdk/root") is None
+
+    def test_find_pdk_unknown_name_is_none(self):
+        assert pdk.find_pdk("definitely_not_a_pdk") is None
+
+    def test_pdk_ok_requires_both_lib_and_lef(self, tmp_path):
+        lib = str(tmp_path / "t.lib")
+        open(lib, "w").write("library(x) {}\n")
+        p = pdk.Pdk(name="sky130", root=str(tmp_path), corner_lib=lib, lefs=[])
+        assert not p.ok
+        p.lefs = [lib]
+        assert p.ok

@@ -23,6 +23,8 @@ from . import opensta  # noqa: F401
 from . import liberty  # noqa: F401
 from . import emit  # noqa: F401
 from . import crosscheck  # noqa: F401
+from . import openroad  # noqa: F401
+from . import pdk  # noqa: F401
 
 __all__ = ["tools", "yosys", "ngspice", "opensta", "liberty", "emit",
-           "crosscheck"]
+           "crosscheck", "openroad", "pdk"]

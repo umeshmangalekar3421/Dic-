@@ -113,6 +113,72 @@ def run_sta_crosscheck(
     return result
 
 
+def run_pnr_crosscheck(
+    nl: Netlist,
+    base_trial: Trial,
+    opt_trial: Trial,
+    period_ps: float,
+    out_dir: str,
+    pdk_obj,
+    density: float = 0.70,
+) -> Dict[str, object]:
+    """
+    Place & route both configurations for real with OpenROAD.
+
+    This is the layer where the measurements matter most: wire length and DRC
+    count stop being predictions of our model and become facts about an
+    actual routed layout.
+    """
+    from . import openroad as or_mod
+    from . import pdk as pdk_mod
+
+    os.makedirs(out_dir, exist_ok=True)
+    cellmap = pdk_mod.CellMap(pdk_obj)
+
+    result: Dict[str, object] = {
+        "backend": "openroad",
+        "path": tools.find("openroad"),
+        "pdk": pdk_obj.name,
+        "pdk_root": pdk_obj.root,
+        "cellmap": cellmap.report(),
+    }
+
+    out: Dict[str, Dict[str, object]] = {}
+    for tag, trial in (("baseline", base_trial), ("optimized", opt_trial)):
+        work = os.path.join(out_dir, f"pnr_{tag}")
+        os.makedirs(work, exist_ok=True)
+        v = os.path.join(work, f"fab32_{tag}.v")
+        sdc = os.path.join(work, f"fab32_{tag}.sdc")
+        emit_mod.write_netlist(nl, trial, v, cellmap=cellmap)
+        or_mod.write_sdc(sdc, period_ps)
+        entry: Dict[str, object] = {"netlist": v}
+        try:
+            r = or_mod.run_pnr(
+                netlist=v, liberty=[pdk_obj.corner_lib], lefs=pdk_obj.lefs,
+                sdc=sdc, top="fab32", out_dir=work, density=density)
+        except Exception as exc:
+            entry.update(ok=False, error=str(exc).strip().splitlines()[-1:][0]
+                         if str(exc).strip() else "")
+            out[tag] = entry
+            continue
+        entry.update(ok=r.ok, area_um2=r.area_um2, drc=r.drc_count,
+                     wirelength_um=r.wirelength_um,
+                     worst_slack_ps=r.worst_slack_ps,
+                     def_path=r.def_path, error=r.error)
+        out[tag] = entry
+
+    result["results"] = out
+    b, o = out["baseline"], out["optimized"]
+    if b.get("drc_count") is not None and o.get("drc_count") is not None:
+        result["drc_delta"] = o["drc_count"] - b["drc_count"]
+        result["verdict"] = (
+            f"OpenROAD routed both: DRC {b['drc_count']} -> {o['drc_count']}")
+    else:
+        result["drc_delta"] = None
+        result["verdict"] = "OpenROAD did not report a DRC count"
+    return result
+
+
 def run_spice_calibration(vdd: float = 0.80,
                           temp_c: float = 25.0) -> Dict[str, object]:
     """Calibrate the compact model from real ngspice measurements."""
@@ -135,6 +201,8 @@ def crosscheck(
     liberty_path: Optional[str] = None,
     do_sta: bool = True,
     do_spice: bool = True,
+    do_pnr: bool = True,
+    pdk_obj=None,
     vdd: float = 0.80,
     temp_c: float = 25.0,
 ) -> Dict[str, object]:
@@ -146,10 +214,22 @@ def crosscheck(
         if tools.find("opensta"):
             report["sta"] = run_sta_crosscheck(
                 nl, base_trial, opt_trial, period_ps, out_dir,
-                liberty_path=liberty_path)
+                liberty_path=liberty_path or (
+                    pdk_obj.corner_lib if pdk_obj else None))
         else:
             report["sta"] = {"backend": "opensta", "available": False,
                              "reason": "OpenSTA not on PATH"}
+
+    if do_pnr:
+        if pdk_obj is None:
+            report["pnr"] = {"backend": "openroad", "available": False,
+                             "reason": "no PDK installed"}
+        elif not tools.find("openroad"):
+            report["pnr"] = {"backend": "openroad", "available": False,
+                             "reason": "OpenROAD not on PATH"}
+        else:
+            report["pnr"] = run_pnr_crosscheck(
+                nl, base_trial, opt_trial, period_ps, out_dir, pdk_obj)
 
     if do_spice:
         report["spice"] = run_spice_calibration(vdd=vdd, temp_c=temp_c)
@@ -186,6 +266,28 @@ def format_crosscheck(report: Dict[str, object]) -> str:
         if imp is not None:
             w(f"    improvement : {imp:+.1f} ps")
             w(f"    verdict     : {sta.get('verdict')}")
+
+    pnr = report.get("pnr")
+    if pnr:
+        if not pnr.get("available", True):
+            w(f"  place & route : SKIPPED ({pnr.get('reason')})")
+        else:
+            w(f"  place & route : OpenROAD  [{pnr.get('path')}]")
+            w(f"    PDK         : {pnr.get('pdk')} @ {pnr.get('pdk_root')}")
+            for tag in ("baseline", "optimized"):
+                r = pnr["results"][tag]
+                if not r.get("ok"):
+                    w(f"    {tag:<10}: FAILED  {r.get('error', '')[:60]}")
+                    continue
+                bits = []
+                if r.get("area_um2") is not None:
+                    bits.append(f"area {r['area_um2']:.0f} um2")
+                if r.get("wirelength_um") is not None:
+                    bits.append(f"wire {r['wirelength_um']:.0f} um")
+                bits.append(f"DRC {r.get('drc_count')}")
+                w(f"    {tag:<10}: " + "  ".join(bits))
+            if pnr.get("drc_delta") is not None:
+                w(f"    verdict     : {pnr.get('verdict')}")
 
     sp = report.get("spice")
     if sp:

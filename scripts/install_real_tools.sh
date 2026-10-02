@@ -31,6 +31,22 @@ check() {
     printf "\n"
 }
 
+    printf "\nPDK\n"
+    printf -- "-------------------\n"
+    found=0
+    for d in "$HOME"/.volare/volare/sky130/versions/*; do
+        [[ -d "$d" ]] || continue
+        ok "sky130" "$(basename "$d")"
+        found=1
+    done
+    [[ $found -eq 0 ]] && miss "sky130" "not installed"
+    if command -v volare >/dev/null 2>&1; then
+        ok "volare" "installed -> $(command -v volare)"
+    else
+        miss "volare" "not installed - needed for the SKY130 PDK"
+    fi
+    printf "\n"
+
 if [[ "${1:-}" == "--check" ]]; then
     check
     python3 -c "from fabaware.backends import tools; print(tools.summary())" \

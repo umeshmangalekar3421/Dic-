@@ -122,13 +122,46 @@ def check_opensta(work, liberty=None):
         return False, str(exc).splitlines()[-1][:120]
 
 
-def check_openroad(work):
+def check_pdk(work, pdk_root=None):
+    """Locate a real PDK and report how many of our cells it can supply."""
+    try:
+        from fabaware.backends import pdk as pdk_mod
+        obj = pdk_mod.find_pdk("sky130", root=pdk_root)
+        if obj is None:
+            return None, ("sky130 not found - install with: "
+                          "pip install volare && volare enable --pdk sky130 <ver>")
+        if not obj.ok:
+            return False, f"found {obj.root} but lib/LEF incomplete"
+        cm = pdk_mod.CellMap(obj)
+        return True, (f"{len(cm.available)} cells in .lib, {len(cm.map)} mapped"
+                      + (f", missing {len(cm.unmapped)}" if cm.unmapped else ""))
+    except Exception as exc:
+        return False, str(exc).splitlines()[-1][:100]
+
+
+def check_openroad(work, pdk_root=None):
+    """Run real place & route if a PDK is available."""
     from fabaware.backends import tools
     exe = tools.find("openroad")
     if not exe:
-        return None, "openroad not on PATH (expected: P&R not wired yet)"
-    rc, out = _run([exe, "-version"])
-    return True, (out.strip().splitlines() or [""])[0][:80]
+        return None, "openroad not on PATH"
+    try:
+        from fabaware.backends import pdk as pdk_mod, crosscheck as cc
+        from fabaware.design import build_fab32
+        from fabaware.optimizer import BASELINE_TRIAL
+        obj = pdk_mod.find_pdk("sky130", root=pdk_root)
+        if obj is None or not obj.ok:
+            return None, "installed, but no PDK to route with"
+        rep = cc.run_pnr_crosscheck(
+            build_fab32(), BASELINE_TRIAL, BASELINE_TRIAL,
+            211.0, work, obj)
+        r = rep["results"]["baseline"]
+        if not r.get("ok"):
+            return False, (r.get("error") or "run failed")[:80]
+        return True, (f"routed: area {r.get('area_um2')} um2, "
+                      f"DRC {r.get('drc_count')}, wire {r.get('wirelength_um')} um")
+    except Exception as exc:
+        return False, str(exc).splitlines()[-1][:100]
 
 
 def main(argv=None) -> int:
@@ -139,6 +172,8 @@ def main(argv=None) -> int:
     ap.add_argument("--quick", action="store_true",
                     help="skip the slower calibration steps")
     ap.add_argument("--work", default="build/verify", help="scratch directory")
+    ap.add_argument("--pdk-root", default=None,
+                    help="explicit path to an installed PDK")
     args = ap.parse_args(argv)
 
     work = args.work
@@ -167,8 +202,10 @@ def main(argv=None) -> int:
     checks += [
         ("OpenSTA · time the gate-level netlist",
          lambda: check_opensta(work, args.liberty)),
-        ("OpenROAD · detect",
-         lambda: check_openroad(work)),
+        ("SKY130  · locate the PDK and map cells",
+         lambda: check_pdk(work, args.pdk_root)),
+        ("OpenROAD · place & route for real",
+         lambda: check_openroad(work, args.pdk_root)),
     ]
 
     print()

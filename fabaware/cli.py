@@ -73,6 +73,13 @@ def main(argv=None) -> int:
     ap.add_argument("--sta", action="store_true",
                     help="verify the result with real OpenSTA: times the "
                          "baseline and optimized netlists independently")
+    ap.add_argument("--pdr", action="store_true",
+                    help="place & route the result for real with OpenROAD "
+                         "(needs a PDK: install one with --pdk sky130)")
+    ap.add_argument("--pdk", default=None, metavar="NAME",
+                    help="use a real process design kit, e.g. sky130")
+    ap.add_argument("--pdk-root", default=None, metavar="PATH",
+                    help="explicit path to an installed PDK")
     ap.add_argument("--quiet", action="store_true", help="suppress progress output")
     args = ap.parse_args(argv)
 
@@ -128,14 +135,30 @@ def main(argv=None) -> int:
     # ------------------------------------------------------------------
     # optional cross-check against the real EDA tools
     # ------------------------------------------------------------------
-    if args.spice or args.sta:
+    if args.spice or args.sta or args.pdr or args.pdk:
         from .backends import crosscheck as cc
+        from .backends import pdk as pdk_mod
+
+        pdk_obj = None
+        if args.pdk or args.pdk_root:
+            pdk_obj = pdk_mod.find_pdk(args.pdk or "sky130", root=args.pdk_root)
+            print("\n[X] Process design kit ...")
+            if pdk_obj is None:
+                print(f"      {args.pdk or 'sky130'} not found. Install it with:\n"
+                      "        pip install volare\n"
+                      "        volare enable --pdk sky130 <version>")
+            else:
+                print(pdk_mod.CellMap(pdk_obj).report())
+                if args.liberty is None:
+                    args.liberty = pdk_obj.corner_lib
+
         print("\n[X] Cross-checking against the real EDA tools ...")
         report_cc = cc.crosscheck(
             nl, base_trial, opt.trial, sta.T_SPEC,
             out_dir=os.path.join(args.out, "crosscheck"),
             liberty_path=args.liberty,
             do_sta=args.sta, do_spice=args.spice,
+            do_pnr=args.pdr, pdk_obj=pdk_obj,
         )
         print(cc.format_crosscheck(report_cc))
 

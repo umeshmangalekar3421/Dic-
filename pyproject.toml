@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabaware-opt"
+version = "1.0.0"
+description = "AI-assisted process-variation-aware standard-cell and physical-design optimization for improved ASIC yield"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "FabAware-Opt" }]
+keywords = [
+    "asic", "eda", "semiconductor", "process-variation", "timing-yield",
+    "standard-cell", "physical-design", "monte-carlo", "bayesian-optimization",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "scikit-learn>=1.0",
+    "matplotlib>=3.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+web = ["flask>=2.0"]   # needed only for the live dashboard (fabaware-web)
+
+[project.scripts]
+fabaware-run = "fabaware.cli:main"
+fabaware-demo = "fabaware.cli:demo"
+fabaware-web = "fabaware.web:main"
+
+[tool.setuptools.packages.find]
+include = ["fabaware*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

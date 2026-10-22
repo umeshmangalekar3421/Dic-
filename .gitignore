@@ -13,6 +13,8 @@ reports/
 reports_real/
 runs/
 build/
+Dataset/
+models/
 *.png
 !docs/**/*.png
 

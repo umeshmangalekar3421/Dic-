@@ -53,35 +53,35 @@ BSIM3_CARD = """\
 * ------------------------------------------------------------------
 .MODEL NMOS NMOS LEVEL=49
 + VERSION=3.3      TOX=1.4E-9     XJ=1.0E-8     NCH=2.2E17
-+ VTH0=0.30        K1=0.42        K2=0.02       K3=0.0
++ VTH0=0.27        K1=0.42        K2=0.02       K3=0.0
 + DVT0=2.8         DVT1=0.45      DVT2=-0.05
 + U0=0.0450        UA=-1.0E-10    UB=2.0E-18    UC=0.0
-+ VSAT=8.0E4       A0=1.0         KETA=-0.05    RDSW=180
++ VSAT=8.0E4       A0=1.0         KETA=-0.05    RDSW=0
 + UTE=-1.5         KT1=-0.11      KT1L=0.0      KT2=0.022
 + PRWG=0.0         PRWB=0.0       WR=1.0
-+ W0=1.0E-8        LINT=2.0E-9    DLC=2.0E-9
++ LINT=0.0         DLC=0.0
 + CGSL=0.0         CGDL=0.0       CKAPPA=0.6    CF=0.0
 + CLC=1.0E-7       CLE=0.6        DLCIG=0.0
 + NOFF=1.0         VOFF=-0.10     NFACTOR=1.2
-+ ETA0=0.08        ETAB=-0.07     PCLM=1.3      PDIBLC1=0.1
-+ DROUT=0.56       PSCBE1=4.24E8  PSCBE2=1.0E-5
++ ETA0=0.0         ETAB=0.0       PCLM=1.3      PDIBLC1=0.0
++ DROUT=0.0        PSCBE1=0.0     PSCBE2=1.0E-5
 + KT1=-0.11        AT=3.3E4       PRT=0.0
 + NJTS=1.0         NJTSSW=1.0     NJS=1.0       NJSW=1.0
 + XTIS=3.0         XTID=3.0       JTSS=0.0
 .MODEL PMOS PMOS LEVEL=49
 + VERSION=3.3      TOX=1.4E-9     XJ=1.0E-8     NCH=1.9E17
-+ VTH0=-0.31       K1=0.40        K2=0.02       K3=0.0
++ VTH0=-0.27       K1=0.40        K2=0.02       K3=0.0
 + DVT0=2.8         DVT1=0.45      DVT2=-0.05
 + U0=0.0210        UA=-1.2E-10    UB=2.4E-18    UC=0.0
-+ VSAT=7.0E4       A0=1.0         KETA=-0.05    RDSW=320
++ VSAT=7.0E4       A0=1.0         KETA=-0.05    RDSW=0
 + UTE=-1.5         KT1=-0.11      KT2=0.022
 + PRWG=0.0         PRWB=0.0       WR=1.0
-+ W0=1.0E-8        LINT=2.0E-9    DLC=2.0E-9
++ LINT=0.0         DLC=0.0
 + CGSL=0.0         CGDL=0.0       CKAPPA=0.6    CF=0.0
 + CLC=1.0E-7       CLE=0.6
 + NOFF=1.0         VOFF=-0.10     NFACTOR=1.2
-+ ETA0=0.08        ETAB=-0.07     PCLM=1.3      PDIBLC1=0.1
-+ DROUT=0.56       PSCBE1=4.24E8  PSCBE2=1.0E-5
++ ETA0=0.0         ETAB=0.0       PCLM=1.3      PDIBLC1=0.0
++ DROUT=0.0        PSCBE1=0.0     PSCBE2=1.0E-5
 + AT=3.3E4         PRT=0.0
 + NJTS=1.0         NJTSSW=1.0     NJS=1.0       NJSW=1.0
 + XTIS=3.0         XTID=3.0       JTSS=0.0
@@ -114,7 +114,9 @@ def deck_iv(
     vds_val = f"{-abs(vds):.6g}" if pmos else f"{abs(vds):.6g}"
     start, stop, step = vgs_start, vgs_stop, vgs_step
     # pMOS is driven with negative gate/source voltages
-    alter_vgs = "alter Vgs = -1.0 * vv" if pmos else "alter Vgs = vv"
+    alter_vgs = ("alter @vgs[dc] = -1.0 * vv\n    alter Vgs = -1.0 * vv"
+                 if pmos else
+                 "alter @vgs[dc] = vv\n    alter Vgs = vv")
     lines = [
         "* FabAware-Opt: I-V characterization (generated)",
         card,
@@ -188,8 +190,12 @@ def deck_iv_vs_vdd(
     """Build a deck sweeping Vdd=Vgs=Vds - used to fit the drive exponent."""
     dev = "PMOS" if pmos else "NMOS"
     card = f".include {model}" if model else BSIM3_CARD
-    alter_vds = "alter Vds = -1.0 * vv" if pmos else "alter Vds = vv"
-    alter_vgs = "alter Vgs = -1.0 * vv" if pmos else "alter Vgs = vv"
+    alter_vds = ("alter @vds[dc] = -1.0 * vv\n    alter Vds = -1.0 * vv"
+                 if pmos else
+                 "alter @vds[dc] = vv\n    alter Vds = vv")
+    alter_vgs = ("alter @vgs[dc] = -1.0 * vv\n    alter Vgs = -1.0 * vv"
+                 if pmos else
+                 "alter @vgs[dc] = vv\n    alter Vgs = vv")
     return "\n".join([
         "* FabAware-Opt: I-V vs Vdd (velocity-saturation fit)",
         card,
@@ -204,7 +210,7 @@ def deck_iv_vs_vdd(
         ".control",
         "set nobreak",
         f"let vv = {vdd_start:.6g}",
-        f"while vv <= {vdd_stop + vdd_step * 1e-6:.6g}",
+        f"while vv <= {vdd_stop + vdd_step * 0.5:.6g}",
         f"    {alter_vds}",
         f"    {alter_vgs}",
         "    op",
@@ -248,6 +254,8 @@ def fit_exponent(vdds: Sequence[float], ions: Sequence[float]) -> float:
     import numpy as np
     x = np.asarray(list(vdds), dtype=float)
     y = np.asarray([abs(v) for v in ions], dtype=float)
+    n = min(len(x), len(y))
+    x, y = x[:n], y[:n]
     ok = (x > 0) & (y > 0)
     if ok.sum() < 2:
         return float("nan")
@@ -296,11 +304,14 @@ def measure_iv(
     l_nm: float = 22.0,
     vgs_values: Optional[Sequence[float]] = None,
     vds: float = 0.80,
+    vdd: Optional[float] = None,
     temp_c: float = 25.0,
     pmos: bool = False,
     model: Optional[str] = None,
 ) -> List[Tuple[float, float]]:
     """Sweep Vgs with real ngspice and return [(vgs, |Ids|), ...]."""
+    if vdd is not None:
+        vds = vdd
     if vgs_values is None:
         vgs_values = [0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
     vgs_values = list(vgs_values)
@@ -339,13 +350,17 @@ def measure_exponent(
                           vdd_stop=vdds[-1], vdd_step=step,
                           temp_c=temp_c, pmos=pmos, model=model)
     out = run_deck(deck, name="vexp")
-    return fit_exponent(vdds, parse_currents(out))
+    from ..compact import v_eff
+    vth = 0.27 if pmos else 0.27
+    veffs = [v_eff(v, vth) for v in vdds]
+    return fit_exponent(veffs, parse_currents(out))
 
 
 def calibrate(
     w_nm: float = 48.0,
     l_nm: float = 22.0,
     vdd: float = 0.80,
+    temp_c: float = 25.0,
     model: Optional[str] = None,
 ) -> Dict[str, float]:
     """
@@ -354,18 +369,18 @@ def calibrate(
     Returns a dict of calibration constants that can be pushed into
     ``fabaware.compact``; see :func:`apply_calibration`.
     """
-    iv_n = measure_iv(w_nm, l_nm, vdd=vdd, pmos=False, model=model)
-    iv_p = measure_iv(w_nm, l_nm, vdd=vdd, pmos=True, model=model)
+    iv_n = measure_iv(w_nm, l_nm, vdd=vdd, temp_c=temp_c, pmos=False, model=model)
+    iv_p = measure_iv(w_nm, l_nm, vdd=vdd, temp_c=temp_c, pmos=True, model=model)
     ion_n = iv_n[-1][1] if iv_n else float("nan")
     ion_p = iv_p[-1][1] if iv_p else float("nan")
     return {
         "i_on_n_A": ion_n,
         "i_on_p_A": ion_p,
         "mu_ratio_p": (ion_p / ion_n) if ion_n else float("nan"),
-        "i_leak_n_A": measure_leakage(w_nm, l_nm, vdd, pmos=False, model=model),
-        "i_leak_p_A": measure_leakage(w_nm, l_nm, vdd, pmos=True, model=model),
-        "vexp_n": measure_exponent(w_nm, l_nm, pmos=False, model=model),
-        "vexp_p": measure_exponent(w_nm, l_nm, pmos=True, model=model),
+        "i_leak_n_A": measure_leakage(w_nm, l_nm, vdd, temp_c=temp_c, pmos=False, model=model),
+        "i_leak_p_A": measure_leakage(w_nm, l_nm, vdd, temp_c=temp_c, pmos=True, model=model),
+        "vexp_n": measure_exponent(w_nm, l_nm, temp_c=temp_c, pmos=False, model=model),
+        "vexp_p": measure_exponent(w_nm, l_nm, temp_c=temp_c, pmos=True, model=model),
         "cox_F_per_um2": gate_cap_per_um2(),
         "w_nm": w_nm,
         "l_nm": l_nm,

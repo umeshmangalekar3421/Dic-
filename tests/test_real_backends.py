@@ -549,13 +549,19 @@ class TestEmit:
                            cwd=root, capture_output=True, text=True)
         out = r.stdout + r.stderr
         assert r.returncode == 0, out[-2000:]
-        m = re.search(r"^\s+(\d+) cells", out, re.M)
+        m = re.search(r"=== design hierarchy ===.*?Number of cells:\s+(\d+)", out, re.S)
+        if not m:
+            m = re.search(r"^\s*(\d+)\s+cells", out, re.M)
         assert m, out[-1500:]
-        assert int(m.group(1)) == sum(1 for i in nl.instances if not i.is_dff)
+        cells_count = int(m.group(1))
+        assert cells_count == sum(1 for i in nl.instances if not i.is_dff)
         # every flip-flop must survive as a submodule
-        m2 = re.search(r"^\s+(\d+) submodules", out, re.M)
-        assert m2 and int(m2.group(1)) == sum(
-            1 for i in nl.instances if i.is_dff)
+        m2 = re.search(r"=== design hierarchy ===.*?DFF_X1\s+(\d+)", out, re.S)
+        if not m2:
+            m2 = re.search(r"^\s*(\d+)\s+submodules", out, re.M)
+        assert m2, out[-1500:]
+        dff_count = int(m2.group(1))
+        assert dff_count == sum(1 for i in nl.instances if i.is_dff)
 
 
 def _write_cell_stubs(path: str) -> None:

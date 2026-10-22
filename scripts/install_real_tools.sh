@@ -108,6 +108,18 @@ echo "=================================="
 echo "  distro package manager : $PKG"
 echo "  python                 : $($PY --version 2>&1)"
 echo "  project                : $HERE"
+
+# warn early: C-extension wheels often lag behind brand-new Python releases,
+# which is the usual cause of an otherwise mysterious install failure
+PY_MINOR=$($PY -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)
+if [[ "${PY_MINOR:-0}" -ge 13 ]]; then
+    echo
+    printf "  ${YELLOW}note${OFF}: Python %s is very new. Some packages (notably the\n" \
+        "$($PY --version 2>&1 | awk '{print $2}')"
+    echo "        SKY130 tool 'volare', via zstandard) may not ship a prebuilt"
+    echo "        binary yet. If volare fails below, install pipx and retry:"
+    echo "          sudo $PKG install pipx && pipx install volare"
+fi
 echo
 
 # --- Python environment -----------------------------------------------------
@@ -178,15 +190,36 @@ else
         ok "volare" "already installed"
     else
         echo "  installing volare ..."
-        if "$VENV_PY" -m pip install --quiet volare 2>/dev/null; then
+        # capture the real error instead of swallowing it - a silent failure
+        # here is far harder to debug than a noisy one
+        VOL_LOG="$(mktemp)"
+        if "$VENV_PY" -m pip install volare >"$VOL_LOG" 2>&1; then
             ok "volare" "installed"
         else
-            bad "volare" "FAILED - try: pip install volare"
+            bad "volare" "pip install failed. Last lines of the error:"
+            sed 's/^/           /' "$VOL_LOG" | tail -12
+            echo
+            # a C-extension dependency (zstandard) may lack a wheel for very
+            # new Python versions; pipx sidesteps the project venv entirely
+            if command -v pipx >/dev/null 2>&1; then
+                echo "  retrying with pipx (installs volare in its own env) ..."
+                if pipx install volare >"$VOL_LOG" 2>&1; then
+                    ok "volare" "installed via pipx"
+                else
+                    bad "volare" "pipx failed too:"
+                    sed 's/^/           /' "$VOL_LOG" | tail -8
+                fi
+            else
+                miss "volare" "no pipx - try:  sudo $PKG install pipx && pipx install volare"
+            fi
         fi
+        rm -f "$VOL_LOG"
     fi
 
-    # find volare on PATH - it may have landed in the venv
-    VOLARE="$(command -v volare || echo "$HERE/venv/bin/volare")"
+    # find volare: PATH first, then the venv, then pipx's shim
+    VOLARE="$(command -v volare || true)"
+    [[ -z "$VOLARE" && -x "$HERE/venv/bin/volare" ]] && VOLARE="$HERE/venv/bin/volare"
+    [[ -z "$VOLARE" && -x "$HOME/.local/bin/volare" ]] && VOLARE="$HOME/.local/bin/volare"
 
     if [[ -x "$VOLARE" ]]; then
         if ls -d "$HOME"/.volare/volare/sky130/versions/* >/dev/null 2>&1; then

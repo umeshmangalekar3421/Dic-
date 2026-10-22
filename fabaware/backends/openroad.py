@@ -76,13 +76,14 @@ def write_tcl(
     fp = (f"initialize_floorplan -die_area \"0 0 {die_w:.3f} {die_h:.3f}\" "
           f"-core_area \"{margin:.3f} {margin:.3f} "
           f"{margin + core_w_um:.3f} {margin + core_h_um:.3f}\"")
-    if site:
-        fp += f" -site {site}"
+    site_arg = site or "unithd"
+    fp += f" -site {site_arg}"
     w(fp)
     w("")
 
     # --- pin placement -------------------------------------------------
-    w("place_pins -random_seed 42 -random")
+    w("make_tracks")
+    w("place_pins -hor_layers met3 -ver_layers met2")
     w("")
 
     # --- power rails ---------------------------------------------------
@@ -120,7 +121,7 @@ def write_tcl(
         ("area", "report_design_area"),
         ("timing_setup", "report_worst_slack -max"),
         ("timing_hold", "report_worst_slack -min"),
-        ("checks", "report_checks -path_delay max -fields {slew cap input nets fanout} -digits 4"),
+        ("checks", "report_checks -path_delay max -fields {slew capacitance input_pin net fanout} -digits 4"),
     ):
         w(f"{cmd} > $output_dir/sta_{name}.rpt")
 
@@ -183,7 +184,7 @@ class PnrResult:
 
 #: OpenROAD: "Design area 1504 u^2 38% utilization"
 _AREA_RE = re.compile(
-    r"design\s+area\s+([-\d.eE+]+)\s*u\^2\s*(?:([-\d.eE+]+)\s*u\^2)?"
+    r"design\s+area\s+([-\d.eE+]+)\s*u(?:m)?(?:\^2|2)?\s*(?:([-\d.eE+]+)\s*u(?:m)?(?:\^2|2)?)?"
     r"\s*(?:([-\d.eE+]+)\s*%\s*utilization)?", re.I)
 
 #: global_route: "Total wire length = 12345.6 um"
@@ -325,8 +326,11 @@ def run_pnr(
 
     res.wirelength_um = parse_wirelength(out)
 
+    drc_p = os.path.join(out_dir, "route_drc.rpt")
     drc_txt = _read("route_drc.rpt")
-    if drc_txt:
+    if os.path.exists(drc_p) and not drc_txt.strip():
+        res.drc_count = 0
+    elif drc_txt:
         res.drc_count = parse_drc(drc_txt) or 0
     else:
         res.drc_count = parse_drc(out)

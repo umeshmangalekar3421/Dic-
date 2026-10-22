@@ -62,7 +62,7 @@ BSIM3_CARD = """\
 + LINT=0.0         DLC=0.0
 + CGSL=0.0         CGDL=0.0       CKAPPA=0.6    CF=0.0
 + CLC=1.0E-7       CLE=0.6        DLCIG=0.0
-+ NOFF=1.0         VOFF=-0.10     NFACTOR=1.2
++ NOFF=1.0         VOFF=-0.10     NFACTOR=1.2A
 + ETA0=0.0         ETAB=0.0       PCLM=1.3      PDIBLC1=0.0
 + DROUT=0.0        PSCBE1=0.0     PSCBE2=1.0E-5
 + KT1=-0.11        AT=3.3E4       PRT=0.0

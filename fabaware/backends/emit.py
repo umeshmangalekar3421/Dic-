@@ -134,7 +134,9 @@ def write_netlist(nl: Netlist, trial: Trial, path: str,
                 p = cellmap.pins_for("DFF", 1.0)
                 if p and len(p) >= 2:
                     dpin, qpin = p[0], p[-1]
-                cpin = CLOCK_NET
+                cp = getattr(cellmap, "clock_pin_for", lambda c, d: None)("DFF", 1.0)
+                if cp:
+                    cpin = cp
             w(f"  {dff_cell} u_dff{inst.idx} ( "
               f".{dpin}({d_net}), .{cpin}({CLOCK_NET}), .{qpin}({q_net}) ) ;")
         else:

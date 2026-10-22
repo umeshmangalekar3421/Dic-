@@ -80,16 +80,17 @@ def find_sky130(root: Optional[str] = None) -> Optional[Pdk]:
     Checks, in order: ``--pdk-root`` / ``PDK_ROOT``, the volare default
     (``~/.volare/sky130A``), and the classic ``$PDK_ROOT/sky130A``.
     """
-    candidates: List[str] = []
     if root:
-        candidates.append(root)
-    env = os.environ.get("PDK_ROOT")
-    if env:
-        candidates += [os.path.join(env, "sky130A"), env]
-    candidates += [os.path.join(_VOLARE, "sky130A"),
-                   os.path.expanduser("~/sky130A"),
-                   "/usr/local/share/pdk/sky130A",
-                   "/opt/pdk/sky130A"]
+        candidates = [os.path.join(root, "sky130A"), root]
+    else:
+        candidates = []
+        env = os.environ.get("PDK_ROOT")
+        if env:
+            candidates += [os.path.join(env, "sky130A"), env]
+        candidates += [os.path.join(_VOLARE, "sky130A"),
+                       os.path.expanduser("~/sky130A"),
+                       "/usr/local/share/pdk/sky130A",
+                       "/opt/pdk/sky130A"]
 
     for base in candidates:
         if not base or not os.path.isdir(base):
@@ -215,14 +216,50 @@ def pin_names(lib_path: str, cell: str) -> Optional[List[str]]:
                 if depth == 0:
                     seg = seg[:i]
                     break
-        if "direction : output" in seg:
+        if re.search(r'direction\s*:\s*"?output"?', seg, re.I):
             out.append(name)
-        elif "direction : input" in seg:
-            if "clock : true" in seg:
+        elif re.search(r'direction\s*:\s*"?input"?', seg, re.I):
+            if re.search(r'clock\s*:\s*"?true"?', seg, re.I):
                 clock.append(name)
             else:
                 ins.append(name)
     return ins + out
+
+
+def clock_pin_name(lib_path: str, cell: str) -> Optional[str]:
+    """Clock pin name of ``cell`` in a Liberty file."""
+    try:
+        text = open(lib_path, errors="ignore").read()
+    except OSError:
+        return None
+    m = re.search(r'cell\s*\(\s*"?%s"?\s*\)\s*\{' % re.escape(cell), text)
+    if not m:
+        return None
+    body = text[m.end():]
+    depth = 1
+    for i, ch in enumerate(body):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                body = body[:i]
+                break
+    for pm in re.finditer(r'pin\s*\(\s*"?([A-Za-z0-9_]+)"?\s*\)\s*\{', body):
+        name = pm.group(1)
+        seg = body[pm.end():]
+        d = 1
+        for j, ch in enumerate(seg):
+            if ch == "{":
+                d += 1
+            elif ch == "}":
+                d -= 1
+                if d == 0:
+                    seg = seg[:j]
+                    break
+        if re.search(r'direction\s*:\s*"?input"?', seg, re.I) and re.search(r'clock\s*:\s*"?true"?', seg, re.I):
+            return name
+    return None
 
 
 class CellMap:
@@ -268,6 +305,12 @@ class CellMap:
             return None
         pins = pin_names(self.pdk.corner_lib, real)
         return pins
+
+    def clock_pin_for(self, cell: str, drive: float) -> Optional[str]:
+        real = self.name_for(cell, drive)
+        if not real:
+            return None
+        return clock_pin_name(self.pdk.corner_lib, real)
 
     def report(self) -> str:
         L = [f"  PDK            : {self.pdk.name} ({self.pdk.root})",

@@ -33,7 +33,7 @@ from . import opensta as opensta_mod
 from . import ngspice as ngspice_mod
 from . import tools
 
-REPORTS = ("timing", "power", "area")
+REPORTS = ("timing", "power")
 
 
 def _one_config(nl: Netlist, trial: Trial, tag: str, period_ps: float,
@@ -155,13 +155,15 @@ def run_pnr_crosscheck(
         try:
             r = or_mod.run_pnr(
                 netlist=v, liberty=[pdk_obj.corner_lib], lefs=pdk_obj.lefs,
-                sdc=sdc, top="fab32", out_dir=work, density=density)
+                sdc=sdc, top="fab32", out_dir=work, density=density,
+                core_w_um=120.0, core_h_um=120.0)
         except Exception as exc:
             entry.update(ok=False, error=str(exc).strip().splitlines()[-1:][0]
                          if str(exc).strip() else "")
             out[tag] = entry
             continue
         entry.update(ok=r.ok, area_um2=r.area_um2, drc=r.drc_count,
+                     drc_count=r.drc_count,
                      wirelength_um=r.wirelength_um,
                      worst_slack_ps=r.worst_slack_ps,
                      def_path=r.def_path, error=r.error)

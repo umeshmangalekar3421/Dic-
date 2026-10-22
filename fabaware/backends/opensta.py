@@ -83,7 +83,7 @@ def write_tcl(netlist: str, liberty: Sequence[str], sdc: str,
     for r in reports:
         path = os.path.join(out_dir, f"sta_{r}.rpt")
         if r == "timing":
-            lines.append(f"report_checks -path_delay max -fields {{slew cap input nets fanout}} "
+            lines.append(f"report_checks -path_delay max -fields {{slew capacitance input_pin net fanout}} "
                          f"-digits 4 > {path}")
             lines.append(f"report_worst_slack -max -digits 4 >> {path}")
         elif r == "power":

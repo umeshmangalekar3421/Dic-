@@ -100,6 +100,13 @@ for a in "$@"; do
     esac
 done
 
+# pip's default 15s read timeout is far too tight for slow or lossy links -
+# it produces a misleading "No matching distribution found" error
+PIP_TIMEOUT="${PIP_TIMEOUT:-120}"
+PIP_RETRIES="${PIP_RETRIES:-5}"
+pipi() { "$VENV_PY" -m pip install --timeout "$PIP_TIMEOUT" --retries "$PIP_RETRIES" "$@"; }
+pipd() { "$VENV_PY" -m pip download --timeout "$PIP_TIMEOUT" --retries "$PIP_RETRIES" "$@"; }
+
 PY="${PYTHON:-python3}"
 command -v "$PY" >/dev/null 2>&1 || { bad "python3" "not found - install Python 3.9+ first"; exit 1; }
 
@@ -146,7 +153,7 @@ if "$VENV_PY" -c "import numpy, scipy, sklearn, matplotlib" 2>/dev/null; then
     ok "deps" "numpy/scipy/sklearn/matplotlib already installed"
 else
     echo "  installing numpy, scipy, scikit-learn, matplotlib (~300 MB) ..."
-    if "$VENV_PY" -m pip install --quiet -e "$HERE[dev,web]" 2>/dev/null; then
+    if pipi --quiet -e "$HERE[dev,web]" 2>/dev/null; then
         ok "deps" "installed"
     else
         bad "deps" "FAILED - try: venv/bin/python -m pip install -e '.[dev,web]'"
@@ -161,7 +168,7 @@ else
     echo "  installing Yosys ..."
     if [[ "$PKG" != "none" ]] && pkg_install yosys; then
         ok "yosys" "installed via $PKG"
-    elif "$VENV_PY" -m pip install --quiet yowasp-yosys 2>/dev/null; then
+    elif pipi --quiet yowasp-yosys 2>/dev/null; then
         ok "yosys" "installed via pip (yowasp-yosys, WebAssembly build)"
     else
         bad "yosys" "FAILED - try: sudo $PKG install yosys"
@@ -193,10 +200,15 @@ else
         # capture the real error instead of swallowing it - a silent failure
         # here is far harder to debug than a noisy one
         VOL_LOG="$(mktemp)"
-        if "$VENV_PY" -m pip install volare >"$VOL_LOG" 2>&1; then
+        if pipi volare >"$VOL_LOG" 2>&1; then
             ok "volare" "installed"
         else
             bad "volare" "pip install failed. Last lines of the error:"
+            if grep -qiE "timeout|timed out|connection|resolve" "$VOL_LOG"; then
+                echo "           ^ this looks like a NETWORK problem, not a build problem."
+                echo "           Retry with a longer timeout:"
+                echo "             python -m pip install --timeout 120 --retries 5 volare"
+            fi
             sed 's/^/           /' "$VOL_LOG" | tail -12
             echo
             # a C-extension dependency (zstandard) may lack a wheel for very

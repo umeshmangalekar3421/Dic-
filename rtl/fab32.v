@@ -25,7 +25,7 @@ module fab32 (
     // ---------------------------------------------------------------
     // FSM: 4-bit counter. Its low bits drive the ALU operation field.
     // ---------------------------------------------------------------
-    reg [3:0] cnt;
+    reg [3:0] cnt = 4'd0;
     always @(posedge clk) cnt <= cnt + 4'd1;
 
     wire op0 = cnt[0];

@@ -1,0 +1,9 @@
+{
+  "design_name": "fab32",
+  "gates": 466,
+  "dffs": 36,
+  "total_instances": 502,
+  "primary_inputs": 66,
+  "primary_outputs": 34,
+  "transistor_count": 2628
+}

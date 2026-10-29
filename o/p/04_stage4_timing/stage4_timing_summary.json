@@ -1,0 +1,9 @@
+{
+  "stage": "Stage 4: Static Timing Analysis Signoff",
+  "tool": "OpenSTA 3.1.0",
+  "opensta_worst_slack": "worst slack max 7.63",
+  "clock_period_ns": 10.0,
+  "clock_freq_mhz": 100.0,
+  "mean_predicted_slack_ps": -3908.0,
+  "signoff_status": "Timing Met (Positive Setup Slack)"
+}

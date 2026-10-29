@@ -1,0 +1,20 @@
+{
+  "stage": "Stage 5: Yield & Process-Variation-Aware Optimization",
+  "method": "Gaussian Process Active Learning (Bayesian Optimization)",
+  "baseline_yield_pct": 41.0,
+  "optimized_yield_pct": 100.0,
+  "yield_gain_pct": 59.0,
+  "optimized_ratio_Wp_Wn": 1.172,
+  "optimized_drives": {
+    "NAND2": 2.0,
+    "AOI22": 2.0,
+    "XOR2": 1.0,
+    "MUX2": 1.0,
+    "A21": 4.0,
+    "NAND3": 1.0,
+    "BUF": 1.0
+  },
+  "area_overhead_pct": 21.4,
+  "power_overhead_pct": 34.9,
+  "yield_plot": "/home/umesh/Academic/DIC/CP/o/p/05_stage5_yield/yield_distribution.png"
+}

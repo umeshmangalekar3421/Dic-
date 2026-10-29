@@ -1,0 +1,10 @@
+{
+  "stage": "Stage 2: Floorplanning & Placement",
+  "tool": "OpenROAD GPL / DPL",
+  "die_size_um": "80 x 80",
+  "core_size_um": "70 x 70",
+  "placed_instances": 329,
+  "total_predicted_wirelength_um": 1578.09,
+  "mean_predicted_wirelength_um": 5.8,
+  "placed_def": "/home/umesh/Academic/DIC/CP/o/p/02_stage2_placement/placed_fab32.def"
+}

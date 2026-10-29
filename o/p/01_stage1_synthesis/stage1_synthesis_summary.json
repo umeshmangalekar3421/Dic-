@@ -1,0 +1,9 @@
+{
+  "stage": "Stage 1: Logic Synthesis",
+  "tool": "Yosys 0.52",
+  "target_library": "SkyWater 130nm HD",
+  "total_nets": 272,
+  "mean_predicted_net_cap_fF": 30.36,
+  "max_predicted_net_cap_fF": 531.86,
+  "output_netlist": "/home/umesh/Academic/DIC/CP/o/p/01_stage1_synthesis/synth_fab32.v"
+}

@@ -1,0 +1,21 @@
+======================================================================
+STAGE 5: PROCESS-VARIATION-AWARE ACTIVE-LEARNING YIELD OPTIMIZATION
+======================================================================
+
+1. Optimization Objective:
+   Maximize parametric timing yield under 3-sigma BSIM4 transistor process,
+   voltage, and temperature (PVT) variations without exceeding area/power budgets.
+
+2. Selected Optimal Parameters (Active Learning Gaussian Process):
+   - PMOS/NMOS Sizing Ratio (Wp/Wn) : 1.172 (Baseline: 1.000)
+   - Critical Cell Drive Strengths   : {'NAND2': 2.0, 'AOI22': 2.0, 'XOR2': 1.0, 'MUX2': 1.0, 'A21': 4.0, 'NAND3': 1.0, 'BUF': 1.0}
+   - Buffer Insertion Count (nbuf)   : 2
+   - Placement Density               : 0.84
+
+3. Monte Carlo Yield Results (100 Simulated Chips):
+   - Baseline Timing Yield           : 41.0%
+   - Optimized Timing Yield          : 100.0%
+   - Absolute Yield Improvement      : +59.0%
+   - Mean Critical Path Delay        : 214.3 ps -> 187.1 ps
+   - Area Overhead                   : +21.4%
+   - Power Overhead                  : +34.9%

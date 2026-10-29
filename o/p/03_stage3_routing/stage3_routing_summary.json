@@ -1,0 +1,8 @@
+{
+  "stage": "Stage 3: Clock Tree Synthesis & Routing",
+  "tool": "OpenROAD CTS + TritonRoute",
+  "routed_def": "/home/umesh/Academic/DIC/CP/o/p/03_stage3_routing/routed_fab32.def",
+  "drc_violations": 0,
+  "mean_predicted_slew_ps": 1054.16,
+  "status": "Clean (Zero DRC)"
+}
